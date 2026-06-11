@@ -43,6 +43,15 @@ extern int gSBSEye;
 extern int gSBSHudEye;
 
 /**
+ * When non-zero, print_text / print_text_centered / print_text_fmt_int
+ * are no-ops.  Set during the right-eye render_hud() call so that text
+ * is not added to sTextLabels a second time (it was already added in the
+ * left-eye pass and kept alive there).  Clear before render_text_labels()
+ * so the right-eye pass can still render those saved labels.
+ */
+extern int gSBSSkipTextAccumulation;
+
+/**
  * Remaps an HUD x-coordinate for the current SBS eye half.
  *
  * In SBS mode each half is 160 px wide but the HUD was designed for

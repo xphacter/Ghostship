@@ -154,6 +154,15 @@ void GhostshipMenu::AddMenuEnhancements() {
                      .Format("%.0f")
                      .Tooltip("Distance between left and right eye cameras in game units.\n"
                               "~30 is a good starting point. Increase for stronger depth."));
+    AddWidget(path, "Hide HUD in SBS", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("SBS_HideHUD"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0) == 0;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Skip HUD rendering in side-by-side mode.\n"
+            "Useful while debugging world rendering."));
 
     path = { "Enhancements", "Gameplay", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", path.sidebarName, 1);

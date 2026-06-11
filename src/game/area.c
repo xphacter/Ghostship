@@ -398,7 +398,23 @@ void render_game(void) {
         geo_process_root(gCurrentArea->unk04, D_8032CE74, D_8032CE78, gFBSetColor);
         } /* end SBS branch */
 
-        if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
+        if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0) &&
+            CVarGetInteger(CVAR_ENHANCEMENT("SBS_HideHUD"), 0)) {
+            /* HUD suppressed — still must restore viewport/scissor and run
+             * one-time-per-frame state-advancing calls (cutscene, text free). */
+            gSBSHudEye = 0;
+            gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&D_8032CF00));
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
+                          SCREEN_HEIGHT - BORDER_HEIGHT);
+            /* Must free text labels and advance cutscene state exactly once. */
+            render_text_labels();
+            do_cutscene_handler();
+            print_displaying_credits_entry();
+            gMenuOptSelectIndex = render_menus_and_dialogs();
+            if (gMenuOptSelectIndex != MENU_OPT_NONE) {
+                gSaveOptSelectIndex = gMenuOptSelectIndex;
+            }
+        } else if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
             /* Render HUD, text and dialogs into both eye halves at screen depth.
              *
              * Key constraints:
@@ -439,48 +455,76 @@ void render_game(void) {
             }
 
             /* --- Left eye HUD --- */
-            gSBSHudEye = -1;
-            if (sbsHudVpL != NULL) {
-                gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(sbsHudVpL));
-            }
-            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
-                          0, BORDER_HEIGHT, SCREEN_WIDTH / 2, SCREEN_HEIGHT - BORDER_HEIGHT);
-            CALL_CANCELLABLE_EVENT(RenderHud) { render_hud(); }
+            /* Each eye pass is in its own compound block so that CALL_CANCELLABLE_EVENT's
+             * local variable declarations (e.g. RenderHud_) don't collide. */
+            {
+                gSBSHudEye = -1;
+                if (sbsHudVpL != NULL) {
+                    gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(sbsHudVpL));
+                }
+                gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                              0, BORDER_HEIGHT, SCREEN_WIDTH / 2, SCREEN_HEIGHT - BORDER_HEIGHT);
+                CALL_CANCELLABLE_EVENT(RenderHud) { render_hud(); }
 
-            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
-                          0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT);
-            /* Left-eye text: renders labels but does NOT free them (gSBSHudEye == -1) */
-            CALL_CANCELLABLE_EVENT(RenderTextLabels) { render_text_labels(); }
-            /* State-advancing calls: run once only (left-eye pass) */
-            do_cutscene_handler();
-            print_displaying_credits_entry();
+                gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                              0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT);
+                /* Left-eye text: renders labels but does NOT free them (gSBSHudEye == -1) */
+                CALL_CANCELLABLE_EVENT(RenderTextLabels) { render_text_labels(); }
+                /* State-advancing calls: run once only (left-eye pass) */
+                do_cutscene_handler();
+                print_displaying_credits_entry();
 
-            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
-                          0, BORDER_HEIGHT, SCREEN_WIDTH / 2, SCREEN_HEIGHT - BORDER_HEIGHT);
-            gMenuOptSelectIndex = render_menus_and_dialogs();
-            if (gMenuOptSelectIndex != MENU_OPT_NONE) {
-                gSaveOptSelectIndex = gMenuOptSelectIndex;
+                gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                              0, BORDER_HEIGHT, SCREEN_WIDTH / 2, SCREEN_HEIGHT - BORDER_HEIGHT);
+                gMenuOptSelectIndex = render_menus_and_dialogs();
+                if (gMenuOptSelectIndex != MENU_OPT_NONE) {
+                    gSaveOptSelectIndex = gMenuOptSelectIndex;
+                }
             }
 
             /* --- Right eye HUD --- */
-            gSBSHudEye = 1;
-            if (sbsHudVpR != NULL) {
-                gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(sbsHudVpR));
-            }
-            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
-                          SCREEN_WIDTH / 2, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
-            CALL_CANCELLABLE_EVENT(RenderHud) { render_hud(); }
+            {
+                gSBSHudEye = 1;
+                if (sbsHudVpR != NULL) {
+                    gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(sbsHudVpR));
+                }
+                gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                              SCREEN_WIDTH / 2, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+                gSBSSkipTextAccumulation = 1; /* don't re-add labels already queued in left-eye pass */
+                CALL_CANCELLABLE_EVENT(RenderHud) { render_hud(); }
+                gSBSSkipTextAccumulation = 0;
 
-            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
-                          SCREEN_WIDTH / 2, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-            /* Right-eye text: renders labels AND frees them (gSBSHudEye == 1) */
-            CALL_CANCELLABLE_EVENT(RenderTextLabels) { render_text_labels(); }
+                gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                              SCREEN_WIDTH / 2, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+                /* Right-eye text: renders labels AND frees them (gSBSHudEye == 1) */
+                CALL_CANCELLABLE_EVENT(RenderTextLabels) { render_text_labels(); }
 
-            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
-                          SCREEN_WIDTH / 2, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
-            gMenuOptSelectIndex = render_menus_and_dialogs();
-            if (gMenuOptSelectIndex != MENU_OPT_NONE) {
-                gSaveOptSelectIndex = gMenuOptSelectIndex;
+                gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                              SCREEN_WIDTH / 2, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+                /* Right-eye pass is render-only: the left-eye pass already
+                 * processed input and advanced game state this frame.
+                 *
+                 * Two specific hazards if we let the right-eye result land:
+                 *  1. When unpausing, the left eye clears gMenuMode to NONE and
+                 *     returns MENU_OPT_DEFAULT.  The right eye then sees
+                 *     gMenuMode==NONE and returns MENU_OPT_NONE.  If that NONE
+                 *     were written to gMenuOptSelectIndex, play_mode_paused()
+                 *     would re-pause the game on the very next frame.
+                 *  2. gDialogColorFadeTimer is incremented inside
+                 *     render_menus_and_dialogs(); calling it twice per frame
+                 *     makes palette fades run at double speed.
+                 *
+                 * Fix: snapshot both before the call and restore afterward,
+                 * keeping only a non-NONE right-eye result (edge case guard). */
+                {
+                    u16 savedFadeTimer = gDialogColorFadeTimer;
+                    s16 rightIndex = render_menus_and_dialogs();
+                    gDialogColorFadeTimer = savedFadeTimer;
+                    if (rightIndex != MENU_OPT_NONE) {
+                        gMenuOptSelectIndex = rightIndex;
+                        gSaveOptSelectIndex = rightIndex;
+                    }
+                }
             }
 
             /* Restore for warp transitions below */

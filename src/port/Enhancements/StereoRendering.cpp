@@ -18,6 +18,7 @@
 extern "C" {
     int gSBSEye = 0;
     int gSBSHudEye = 0;
+    int gSBSSkipTextAccumulation = 0;
 }
 
 // ---------------------------------------------------------------------------

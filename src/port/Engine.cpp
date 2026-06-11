@@ -23,6 +23,7 @@
 #include "port/mods/PortEnhancements.h"
 #include "port/events/Events.h"
 #include "port/console/DevConsole.h"
+#include "port/Enhancements/StereoRendering.h"
 #include <fast/Fast3dWindow.h>
 #include <fast/interpreter.h>
 #include <SDL2/SDL.h>
@@ -1546,6 +1547,13 @@ extern "C" uint32_t OTRGetCurrentHeight() {
 }
 
 extern "C" float OTRGetHUDAspectRatio() {
+    // In SBS HUD mode, force 4:3 so all HUD element coordinates stay within
+    // [0, SCREEN_WIDTH]. This ensures sbsHudBaseX(x) = x/2 correctly maps
+    // every element to the same relative position in each 160-px eye half,
+    // producing zero-parallax (screen-depth) HUD in both SBS halves.
+    if (gSBSHudEye != 0) {
+        return 4.0f / 3.0f;
+    }
     if (CVarGetInteger("gHUDAspectRatio.Enabled", 0) == 0 || CVarGetInteger("gHUDAspectRatio.X", 0) == 0 ||
         CVarGetInteger("gHUDAspectRatio.Y", 0) == 0) {
         return GameEngine_GetAspectRatio();

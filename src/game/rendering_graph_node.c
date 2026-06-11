@@ -1235,10 +1235,19 @@ void geo_process_root(struct GraphNodeRoot *node, Vp *b, Vp *c, s32 clearColor) 
          * Full screen (320px):  vscale.x = 640, vtrans.x = 640  → 0–320px
          * Left  half (0–160px): vscale.x = 320, vtrans.x = 320  → centre  80px
          * Right half (160–320px):vscale.x = 320, vtrans.x = 960  → centre 240px
-         * In terms of SCREEN_WIDTH (=320): half-extent = SCREEN_WIDTH, left centre = SCREEN_WIDTH, right centre = SCREEN_WIDTH*3 */
+         * In terms of SCREEN_WIDTH (=320): half-extent = SCREEN_WIDTH, left centre = SCREEN_WIDTH, right centre = SCREEN_WIDTH*3
+         *
+         * SCISSOR is also required: gDPFillRectangle (sky, backgrounds) uses
+         * absolute screen coordinates and is NOT clipped by the viewport.
+         * Without a half-screen scissor the right-eye background fill overwrites
+         * the entire framebuffer, erasing the left-eye world. */
         if (gSBSEye != 0) {
             viewport->vp.vscale[0] = SCREEN_WIDTH;
             viewport->vp.vtrans[0] = (gSBSEye == -1) ? SCREEN_WIDTH : SCREEN_WIDTH * 3;
+            s16 scissorUlx = (gSBSEye == -1) ? 0             : SCREEN_WIDTH / 2;
+            s16 scissorLrx = (gSBSEye == -1) ? SCREEN_WIDTH / 2 : SCREEN_WIDTH;
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                          scissorUlx, 0, scissorLrx, SCREEN_HEIGHT);
         }
         gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(viewport));
         // AddObjectMatrix(gMatStack[gMatStackIndex], G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH);

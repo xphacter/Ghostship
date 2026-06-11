@@ -170,6 +170,7 @@ void parse_width_field(const char *str, s32 *srcIndex, u8 *width, s8 *zeroPad) {
  * related to overflow. For romhacks, prefer sprintf + print_text.
  */
 void print_text_fmt_int(s32 x, s32 y, const char *str, s32 n) {
+    if (gSBSSkipTextAccumulation) return;
     char c = 0;
     s8 zeroPad = FALSE;
     u8 width = 0;
@@ -223,6 +224,7 @@ void print_text_fmt_int(s32 x, s32 y, const char *str, s32 n) {
  * Prints text in the colorful lettering at given X, Y coordinates.
  */
 void print_text(s32 x, s32 y, const char *str) {
+    if (gSBSSkipTextAccumulation) return;
     char c = 0;
     s32 length = 0;
     s32 srcIndex = 0;
@@ -254,6 +256,7 @@ void print_text(s32 x, s32 y, const char *str) {
  * Prints text in the colorful lettering centered at given X, Y coordinates.
  */
 void print_text_centered(s32 x, s32 y, const char *str) {
+    if (gSBSSkipTextAccumulation) return;
     char c = 0;
     UNUSED s8 unused1 = 0;
     UNUSED s32 unused2 = 0;
