@@ -132,6 +132,29 @@ void GhostshipMenu::AddMenuEnhancements() {
         })
         .Options(IntSliderOptions().Min(1).Max(100).DefaultValue(9).ShowButtons(true).Format("%d"));
 
+    AddWidget(path, "Stereoscopic 3D", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Side-by-Side 3D", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Stereoscopic3D"))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip(
+            "Render the game in side-by-side stereoscopic 3D.\n"
+            "Use with a 3D TV (SBS mode), VR headset via SteamVR Theatre,\n"
+            "or anaglyph glasses with a post-process shader."));
+    AddWidget(path, "Eye Separation", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_ENHANCEMENT("EyeSeparation"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0) == 0;
+        })
+        .Options(FloatSliderOptions()
+                     .Min(0.0f)
+                     .Max(200.0f)
+                     .DefaultValue(30.0f)
+                     .ShowButtons(true)
+                     .Format("%.0f")
+                     .Tooltip("Distance between left and right eye cameras in game units.\n"
+                              "~30 is a good starting point. Increase for stronger depth."));
+
     path = { "Enhancements", "Gameplay", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", path.sidebarName, 1);
     path.column = SECTION_COLUMN_1;

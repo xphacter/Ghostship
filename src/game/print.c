@@ -8,6 +8,7 @@
 #include "print.h"
 #include "segment2.h"
 #include "ingame_menu.h"
+#include "port/Enhancements/StereoRendering.h"
 
 /**
  * This file handles printing and formatting the colorful text that
@@ -364,7 +365,7 @@ void add_glyph_texture(s8 glyphIndex) {
  * Renders the glyph that's set at the given position.
  */
 void render_textrect(s32 x, s32 y, s32 pos) {
-    s32 rectBaseX = x + pos * 12;
+    s32 rectBaseX = sbsHudBaseX(x) + pos * 12;
     s32 rectBaseY = 224 - y;
     s32 rectX;
     s32 rectY;
@@ -426,10 +427,19 @@ void render_text_labels(void) {
             }
         }
 
-        mem_pool_free(gEffectsMemoryPool, sTextLabels[i]);
+        /* In SBS HUD mode the left-eye pass must keep labels alive for the
+         * right-eye pass.  Only free on the right-eye pass (gSBSHudEye == 1)
+         * or when SBS is not active (gSBSHudEye == 0). */
+        if (gSBSHudEye != -1) {
+            mem_pool_free(gEffectsMemoryPool, sTextLabels[i]);
+        }
     }
 
     gSPDisplayList(gDisplayListHead++, dl_hud_img_end);
 
-    sTextLabelsCount = 0;
+    /* Clear the count only after the right-eye (or non-SBS) pass so the
+     * right-eye pass still finds labels to render. */
+    if (gSBSHudEye != -1) {
+        sTextLabelsCount = 0;
+    }
 }

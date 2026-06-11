@@ -13,6 +13,7 @@
 #include "sm64.h"
 #include "port/interpolation/FrameInterpolation.h"
 #include "port/Matrix.h"
+#include "port/Enhancements/StereoRendering.h"
 
 extern void mirror_mode_apply_projection(void);
 extern int mirror_mode_is_enabled(void);
@@ -1229,6 +1230,16 @@ void geo_process_root(struct GraphNodeRoot *node, Vp *b, Vp *c, s32 clearColor) 
         mtxf_identity(gMatStack[gMatStackIndex]);
         mtxf_to_mtx(initialMatrix, gMatStack[gMatStackIndex]);
         gMatStackFixed[gMatStackIndex] = initialMatrix;
+        /* Side-by-side 3D: redirect each eye to its half of the screen.
+         * N64 viewport uses 10.2 fixed-point (pixel_value * 4).
+         * Full screen (320px):  vscale.x = 640, vtrans.x = 640  → 0–320px
+         * Left  half (0–160px): vscale.x = 320, vtrans.x = 320  → centre  80px
+         * Right half (160–320px):vscale.x = 320, vtrans.x = 960  → centre 240px
+         * In terms of SCREEN_WIDTH (=320): half-extent = SCREEN_WIDTH, left centre = SCREEN_WIDTH, right centre = SCREEN_WIDTH*3 */
+        if (gSBSEye != 0) {
+            viewport->vp.vscale[0] = SCREEN_WIDTH;
+            viewport->vp.vtrans[0] = (gSBSEye == -1) ? SCREEN_WIDTH : SCREEN_WIDTH * 3;
+        }
         gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(viewport));
         // AddObjectMatrix(gMatStack[gMatStackIndex], G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH);
         // // gSPMatrix(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(gMatStackFixed[gMatStackIndex]),

@@ -1,0 +1,115 @@
+--- a/src/game/rendering_graph_node.c
++++ b/src/game/rendering_graph_node.c
+
+============================================================
+OVERVIEW
+============================================================
+geo_process_root() (or the helper it calls to emit the
+initial viewport + scissor commands) needs to know which
+eye is active and emit half-screen values accordingly.
+
+The relevant section is wherever you see calls like:
+    gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&viewport));
+    gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                  0, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+
+inside geo_process_root.
+
+============================================================
+ADD near the top of rendering_graph_node.c (with the other includes):
+============================================================
+
+ #ifdef PC_PORT
+ #include "port/src/enhancements/StereoRendering.h"
+ #endif
+
+============================================================
+FIND (in geo_process_root, the initial gSPViewport + gDPSetScissor block):
+============================================================
+
+    gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&viewport));
+    gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                  0, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+
+  The Vp 'viewport' struct is typically built from the GraphNodeRoot fields,
+  e.g.:
+      Vp viewport = { {
+          { node->width * 2, node->height * 2, 511, 0 },   // vscale
+          { node->width * 2, node->height * 2, 511, 0 },   // vtrans
+      } };
+
+============================================================
+REPLACE WITH:
+============================================================
+
+ #ifdef PC_PORT
+     /* Side-by-side 3D: redirect each eye to its half of the screen.
+      *
+      * N64 viewport uses 2.2 fixed-point (divide by 4 to get pixels).
+      * Full screen (320px wide):
+      *   vscale.x = 640  (half-width = 160)   vtrans.x = 640  (centre = 160)
+      * Left  half (0-160px):
+      *   vscale.x = 320  (half-width =  80)   vtrans.x = 320  (centre =  80)
+      * Right half (160-320px):
+      *   vscale.x = 320  (half-width =  80)   vtrans.x = 960  (centre = 240)
+      */
+     if (gSBSEye != 0) {
+         /* Half-width viewport for this eye.
+          *
+          * N64 viewport is in 2.2 fixed-point (pixels * 4):
+          *   Full  screen: vscale.x = 640 (half-width 160px), vtrans.x = 640 (centre 160px)
+          *   Left  half:   vscale.x = 320 (half-width  80px), vtrans.x = 320 (centre  80px)
+          *   Right half:   vscale.x = 320 (half-width  80px), vtrans.x = 960 (centre 240px)
+          * In terms of SCREEN_WIDTH (=320):
+          *   vscale.x  = SCREEN_WIDTH      (= 320)
+          *   vtrans.x  = SCREEN_WIDTH      (= 320) for left eye
+          *   vtrans.x  = SCREEN_WIDTH * 3  (= 960) for right eye
+          */
+         Vp sbsVp = { {
+             { SCREEN_WIDTH,      (s16)(node->height * 2), 511, 0 },  /* vscale: half width */
+             { SCREEN_WIDTH,      (s16)(node->height * 2), 511, 0 },  /* vtrans: left eye centre */
+         } };
+         if (gSBSEye == 1) {
+             sbsVp.vp.vtrans[0] = SCREEN_WIDTH * 3;  /* right eye centre at pixel 240 */
+         }
+         gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&sbsVp));
+
+         /* Scissor to this eye's half */
+         s32 scissorX0 = (gSBSEye == -1) ? 0            : SCREEN_WIDTH / 2;
+         s32 scissorX1 = (gSBSEye == -1) ? SCREEN_WIDTH / 2 : SCREEN_WIDTH;
+         gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                       scissorX0, BORDER_HEIGHT,
+                       scissorX1, SCREEN_HEIGHT - BORDER_HEIGHT);
+     } else {
+ #endif
+         gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&viewport));
+         gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                       0, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+ #ifdef PC_PORT
+     }
+ #endif
+
+============================================================
+NOTES
+============================================================
+• SCREEN_WIDTH is 320 in the N64 coordinate space used by the
+  display list.  Do NOT use the window's actual pixel width here.
+
+• The Vp struct uses 10.2 fixed-point for vscale/vtrans (multiply
+  pixel values by 4).  Half the N64 screen = 160px → *4 = 640 for
+  full width, so half-width = 80px → *4 = 320.
+
+  Full:  vscale.x = 640, vtrans.x = 640   → pixels 0–320
+  Left:  vscale.x = 320, vtrans.x = 320   → pixels 0–160
+  Right: vscale.x = 320, vtrans.x = 960   → pixels 160–320
+
+• If the viewport struct in your version of geo_process_root is
+  built differently (e.g. directly from SCREEN_WIDTH constants
+  rather than node->width), adjust the vscale/vtrans calculation
+  accordingly, keeping the pixel math above correct.
+
+• The sbsVp struct is stack-allocated; VIRTUAL_TO_PHYSICAL works
+  on it because it is within the RSP-visible address range on real
+  hardware, and libultraship ignores the physical address for the
+  viewport (it reads from the struct pointer directly).
+============================================================

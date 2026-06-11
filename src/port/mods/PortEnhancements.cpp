@@ -1,5 +1,6 @@
 #include "PortEnhancements.h"
 #include "mirror/MirrorMode.h"
+#include "port/Enhancements/StereoRendering.h"
 
 #define INIT_EVENT_IDS
 
@@ -56,6 +57,9 @@ void PortEnhancements_Init() {
 
     // Initialize mirror mode
     mirror_mode_init();
+
+    // Initialize stereoscopic 3D
+    StereoRendering_Init();
 
     // Register event listeners
     REGISTER_LISTENER(RenderHud, EVENT_PRIORITY_NORMAL, [](IEvent* event) { mirror_mode_undo_projection(); });

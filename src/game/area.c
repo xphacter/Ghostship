@@ -22,6 +22,7 @@
 #include "save_file.h"
 #include "level_table.h"
 #include "dialog_ids.h"
+#include "port/Enhancements/StereoRendering.h"
 
 struct SpawnInfo gPlayerSpawnInfos[1];
 struct GraphNode *D_8033A160[0x100];
@@ -360,29 +361,150 @@ void play_transition_after_delay(s16 transType, s16 time, u8 red, u8 green, u8 b
 
 void render_game(void) {
     if (gCurrentArea != NULL && !gWarpTransition.pauseRendering) {
+        if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
+            /* Compute the camera's right vector (horizontal only).
+             * right = forward × up with up = (0,1,0) simplifies to:
+             *   right.x = -forward.z = -dz/len
+             *   right.z =  forward.x =  dx/len  */
+            f32 eyeSep = CVarGetFloat(CVAR_ENHANCEMENT("EyeSeparation"), 30.0f) * 0.5f;
+            f32 dx = gLakituState.focus[0] - gLakituState.pos[0];
+            f32 dz = gLakituState.focus[2] - gLakituState.pos[2];
+            f32 len = sqrtf(dx * dx + dz * dz);
+            f32 rx = 0.0f, rz = 0.0f;
+            if (len > 0.001f) {
+                rx = (-dz / len) * eyeSep;
+                rz = ( dx / len) * eyeSep;
+            }
+            f32 savedX = gLakituState.pos[0];
+            f32 savedZ = gLakituState.pos[2];
+
+            /* Left eye */
+            gSBSEye = -1;
+            gLakituState.pos[0] = savedX - rx;
+            gLakituState.pos[2] = savedZ - rz;
+            geo_process_root(gCurrentArea->unk04, D_8032CE74, D_8032CE78, gFBSetColor);
+
+            /* Right eye */
+            gSBSEye = 1;
+            gLakituState.pos[0] = savedX + rx;
+            gLakituState.pos[2] = savedZ + rz;
+            geo_process_root(gCurrentArea->unk04, D_8032CE74, D_8032CE78, 0);
+
+            /* Restore and reset for HUD pass */
+            gLakituState.pos[0] = savedX;
+            gLakituState.pos[2] = savedZ;
+            gSBSEye = 0;
+        } else {
         geo_process_root(gCurrentArea->unk04, D_8032CE74, D_8032CE78, gFBSetColor);
+        } /* end SBS branch */
 
-        gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&D_8032CF00));
+        if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
+            /* Render HUD, text and dialogs into both eye halves at screen depth.
+             *
+             * Key constraints:
+             * - libultraship's GfxDrawRectangle bypasses gSPViewport for texture
+             *   rectangles; only the scissor clips them.  We therefore shift the
+             *   actual x-coordinates of each sprite/glyph via sbsHudBaseX() so
+             *   they land inside the correct half.
+             * - render_text_labels() frees its buffer after the first call, so we
+             *   must NOT free on the left-eye pass (gSBSHudEye == -1).
+             * - do_cutscene_handler() / print_displaying_credits_entry() must only
+             *   run once per frame to avoid double-advancing game state.
+             * - Vp must live on the display-list heap, not the stack, because the
+             *   display list executes after render_game() returns.
+             */
 
-        gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
-                      SCREEN_HEIGHT - BORDER_HEIGHT);
+            /* Allocate viewports on the display-list heap (stack would be invalid
+             * by the time the display list is executed). */
+            Vp *sbsHudVpL = alloc_display_list(sizeof(Vp));
+            Vp *sbsHudVpR = alloc_display_list(sizeof(Vp));
+            if (sbsHudVpL != NULL && sbsHudVpR != NULL) {
+                sbsHudVpL->vp.vscale[0] = SCREEN_WIDTH;
+                sbsHudVpL->vp.vscale[1] = (s16)(SCREEN_HEIGHT * 2);
+                sbsHudVpL->vp.vscale[2] = 511;
+                sbsHudVpL->vp.vscale[3] = 0;
+                sbsHudVpL->vp.vtrans[0] = SCREEN_WIDTH;
+                sbsHudVpL->vp.vtrans[1] = (s16)(SCREEN_HEIGHT * 2);
+                sbsHudVpL->vp.vtrans[2] = 511;
+                sbsHudVpL->vp.vtrans[3] = 0;
 
-        CALL_CANCELLABLE_EVENT(RenderHud) {
-            render_hud();
-        }
+                sbsHudVpR->vp.vscale[0] = SCREEN_WIDTH;
+                sbsHudVpR->vp.vscale[1] = (s16)(SCREEN_HEIGHT * 2);
+                sbsHudVpR->vp.vscale[2] = 511;
+                sbsHudVpR->vp.vscale[3] = 0;
+                sbsHudVpR->vp.vtrans[0] = (s16)(SCREEN_WIDTH * 3);
+                sbsHudVpR->vp.vtrans[1] = (s16)(SCREEN_HEIGHT * 2);
+                sbsHudVpR->vp.vtrans[2] = 511;
+                sbsHudVpR->vp.vtrans[3] = 0;
+            }
 
-        gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-        CALL_CANCELLABLE_EVENT(RenderTextLabels) {
-            render_text_labels();
-        }
-        do_cutscene_handler();
-        print_displaying_credits_entry();
+            /* --- Left eye HUD --- */
+            gSBSHudEye = -1;
+            if (sbsHudVpL != NULL) {
+                gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(sbsHudVpL));
+            }
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                          0, BORDER_HEIGHT, SCREEN_WIDTH / 2, SCREEN_HEIGHT - BORDER_HEIGHT);
+            CALL_CANCELLABLE_EVENT(RenderHud) { render_hud(); }
 
-        gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
-                      SCREEN_HEIGHT - BORDER_HEIGHT);
-        gMenuOptSelectIndex = render_menus_and_dialogs();
-        if (gMenuOptSelectIndex != MENU_OPT_NONE) {
-            gSaveOptSelectIndex = gMenuOptSelectIndex;
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                          0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT);
+            /* Left-eye text: renders labels but does NOT free them (gSBSHudEye == -1) */
+            CALL_CANCELLABLE_EVENT(RenderTextLabels) { render_text_labels(); }
+            /* State-advancing calls: run once only (left-eye pass) */
+            do_cutscene_handler();
+            print_displaying_credits_entry();
+
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                          0, BORDER_HEIGHT, SCREEN_WIDTH / 2, SCREEN_HEIGHT - BORDER_HEIGHT);
+            gMenuOptSelectIndex = render_menus_and_dialogs();
+            if (gMenuOptSelectIndex != MENU_OPT_NONE) {
+                gSaveOptSelectIndex = gMenuOptSelectIndex;
+            }
+
+            /* --- Right eye HUD --- */
+            gSBSHudEye = 1;
+            if (sbsHudVpR != NULL) {
+                gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(sbsHudVpR));
+            }
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                          SCREEN_WIDTH / 2, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+            CALL_CANCELLABLE_EVENT(RenderHud) { render_hud(); }
+
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                          SCREEN_WIDTH / 2, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+            /* Right-eye text: renders labels AND frees them (gSBSHudEye == 1) */
+            CALL_CANCELLABLE_EVENT(RenderTextLabels) { render_text_labels(); }
+
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                          SCREEN_WIDTH / 2, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+            gMenuOptSelectIndex = render_menus_and_dialogs();
+            if (gMenuOptSelectIndex != MENU_OPT_NONE) {
+                gSaveOptSelectIndex = gMenuOptSelectIndex;
+            }
+
+            /* Restore for warp transitions below */
+            gSBSHudEye = 0;
+            gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&D_8032CF00));
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
+                          SCREEN_HEIGHT - BORDER_HEIGHT);
+        } else {
+            gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&D_8032CF00));
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
+                          SCREEN_HEIGHT - BORDER_HEIGHT);
+            CALL_CANCELLABLE_EVENT(RenderHud) { render_hud(); }
+
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+            CALL_CANCELLABLE_EVENT(RenderTextLabels) { render_text_labels(); }
+            do_cutscene_handler();
+            print_displaying_credits_entry();
+
+            gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
+                          SCREEN_HEIGHT - BORDER_HEIGHT);
+            gMenuOptSelectIndex = render_menus_and_dialogs();
+            if (gMenuOptSelectIndex != MENU_OPT_NONE) {
+                gSaveOptSelectIndex = gMenuOptSelectIndex;
+            }
         }
 
         if (D_8032CE78 != NULL) {

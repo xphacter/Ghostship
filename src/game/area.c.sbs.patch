@@ -1,0 +1,93 @@
+--- a/src/game/area.c
++++ b/src/game/area.c
+@@ -1,6 +1,7 @@
+ #include <libultra/types.h>
+ #include "prevent_bss_reordering.h"
+ #include "area.h"
++#include "port/src/enhancements/StereoRendering.h"
+ ...
+
+ ============================================================
+ FIND this in render_game() (src/game/area.c):
+ ============================================================
+
+     if (gCurrentArea != NULL && !gWarpTransition.pauseRendering) {
+         geo_process_root(gCurrentArea->unk04, D_8032CE74, D_8032CE78, gFBSetColor);
+
+         gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&D_8032CF00));
+         gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
+                       SCREEN_HEIGHT - BORDER_HEIGHT);
+
+         CALL_CANCELLABLE_EVENT(RenderHud) {
+             render_hud();
+         }
+
+ ============================================================
+ REPLACE WITH:
+ ============================================================
+
+     if (gCurrentArea != NULL && !gWarpTransition.pauseRendering) {
+
+ #ifdef PC_PORT   /* SBS 3D ------------------------------------------------- */
+         if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
+             /* Compute the camera's right vector (horizontal only).
+              * right = normalize( cross(look, up) ) with up = (0,1,0)
+              * simplifies to:  right.x =  look.z,  right.z = -look.x */
+             f32 eyeSep = CVarGetFloat(CVAR_ENHANCEMENT("EyeSeparation"), 30.0f) * 0.5f;
+             f32 dx = gLakituState.focus[0] - gLakituState.pos[0];
+             f32 dz = gLakituState.focus[2] - gLakituState.pos[2];
+             f32 len = sqrtf(dx * dx + dz * dz);
+
+             f32 rx = 0.0f, rz = 0.0f;
+             if (len > 0.001f) {
+                 /* right = forward × up, simplified with up=(0,1,0):
+                  * right.x = -forward.z = -dz/len
+                  * right.z =  forward.x =  dx/len  */
+                 rx = (-dz / len) * eyeSep;
+                 rz = ( dx / len) * eyeSep;
+             }
+
+             /* Save original camera position */
+             f32 savedX = gLakituState.pos[0];
+             f32 savedZ = gLakituState.pos[2];
+
+             /* ---- LEFT EYE (shift camera left, render to left half) ---- */
+             gSBSEye = -1;
+             gLakituState.pos[0] = savedX - rx;
+             gLakituState.pos[2] = savedZ - rz;
+             geo_process_root(gCurrentArea->unk04, D_8032CE74, D_8032CE78, gFBSetColor);
+
+             /* ---- RIGHT EYE (shift camera right, render to right half) -- */
+             gSBSEye = 1;
+             gLakituState.pos[0] = savedX + rx;
+             gLakituState.pos[2] = savedZ + rz;
+             geo_process_root(gCurrentArea->unk04, D_8032CE74, D_8032CE78, 0 /* no clear */);
+
+             /* Restore camera and reset eye flag for HUD pass */
+             gLakituState.pos[0] = savedX;
+             gLakituState.pos[2] = savedZ;
+             gSBSEye = 0;
+         } else {
+ #endif /* PC_PORT --------------------------------------------------------- */
+
+         geo_process_root(gCurrentArea->unk04, D_8032CE74, D_8032CE78, gFBSetColor);
+
+ #ifdef PC_PORT
+         }   /* end SBS branch */
+ #endif
+
+         /* HUD / text / menus render at full width regardless of SBS */
+         gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&D_8032CF00));
+         gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
+                       SCREEN_HEIGHT - BORDER_HEIGHT);
+
+         CALL_CANCELLABLE_EVENT(RenderHud) {
+             render_hud();
+         }
+
+ ============================================================
+ NOTE: CVarGetFloat may need to be added to whichever header
+ exposes CVarGetInteger if not already present.  In libultraship
+ it is declared in <libultraship/libultraship.h>.  If area.c
+ doesn't include that header yet, add it at the top.
+ ============================================================

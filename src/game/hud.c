@@ -15,6 +15,7 @@
 #include "print.h"
 #include "port/ui/cvar_prefixes.h"
 #include "port/interpolation/FrameInterpolation.h"
+#include "port/Enhancements/StereoRendering.h"
 
 /* @file hud.c
  * This file implements HUD rendering and power meter animations.
@@ -63,10 +64,11 @@ struct CameraHUD sCameraHUD = { CAM_STATUS_NONE };
  * Renders a rgba16 16x16 glyph texture from a table list.
  */
 void render_hud_tex_lut(s32 x, s32 y, u8 *texture) {
+    s32 sx = sbsHudBaseX(x);
     gDPPipeSync(gDisplayListHead++);
     gDPSetTextureImage(gDisplayListHead++, G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, texture);
     gSPDisplayList(gDisplayListHead++, dl_hud_img_load_tex_block);
-    gSPTextureRectangle(gDisplayListHead++, x << 2, y << 2, (x + 15) << 2, (y + 15) << 2,
+    gSPTextureRectangle(gDisplayListHead++, sx << 2, y << 2, (sx + 15) << 2, (y + 15) << 2,
                         G_TX_RENDERTILE, 0, 0, 4 << 10, 1 << 10);
 }
 
@@ -74,6 +76,7 @@ void render_hud_tex_lut(s32 x, s32 y, u8 *texture) {
  * Renders a rgba16 8x8 glyph texture from a table list.
  */
 void render_hud_small_tex_lut(s32 x, s32 y, u8 *texture) {
+    s32 sx = sbsHudBaseX(x);
     gDPSetTile(gDisplayListHead++, G_IM_FMT_RGBA, G_IM_SIZ_16b, 0, 0, G_TX_LOADTILE, 0,
                 G_TX_WRAP | G_TX_NOMIRROR, G_TX_NOMASK, G_TX_NOLOD, G_TX_WRAP | G_TX_NOMIRROR, G_TX_NOMASK, G_TX_NOLOD);
     gDPTileSync(gDisplayListHead++);
@@ -84,7 +87,7 @@ void render_hud_small_tex_lut(s32 x, s32 y, u8 *texture) {
     gDPSetTextureImage(gDisplayListHead++, G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, texture);
     gDPLoadSync(gDisplayListHead++);
     gDPLoadBlock(gDisplayListHead++, G_TX_LOADTILE, 0, 0, 8 * 8 - 1, CALC_DXT(8, G_IM_SIZ_16b_BYTES));
-    gSPTextureRectangle(gDisplayListHead++, x << 2, y << 2, (x + 7) << 2, (y + 7) << 2, G_TX_RENDERTILE,
+    gSPTextureRectangle(gDisplayListHead++, sx << 2, y << 2, (sx + 7) << 2, (y + 7) << 2, G_TX_RENDERTILE,
                         0, 0, 4 << 10, 1 << 10);
 }
 
