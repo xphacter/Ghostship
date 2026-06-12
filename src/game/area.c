@@ -422,46 +422,30 @@ void render_game(void) {
              *   rectangles; only the scissor clips them.  We therefore shift the
              *   actual x-coordinates of each sprite/glyph via sbsHudBaseX() so
              *   they land inside the correct half.
+             * - 3D menu geometry (shade, text triangles) uses a full-screen viewport
+             *   combined with a per-eye ortho shift in create_dl_ortho_matrix()
+             *   (gSBSHudEye drives the shift).  Half-screen viewports here would
+             *   stack with that shift and double-compress the content.
              * - render_text_labels() frees its buffer after the first call, so we
              *   must NOT free on the left-eye pass (gSBSHudEye == -1).
              * - do_cutscene_handler() / print_displaying_credits_entry() must only
              *   run once per frame to avoid double-advancing game state.
-             * - Vp must live on the display-list heap, not the stack, because the
-             *   display list executes after render_game() returns.
              */
 
-            /* Allocate viewports on the display-list heap (stack would be invalid
-             * by the time the display list is executed). */
-            Vp *sbsHudVpL = alloc_display_list(sizeof(Vp));
-            Vp *sbsHudVpR = alloc_display_list(sizeof(Vp));
-            if (sbsHudVpL != NULL && sbsHudVpR != NULL) {
-                sbsHudVpL->vp.vscale[0] = SCREEN_WIDTH;
-                sbsHudVpL->vp.vscale[1] = (s16)(SCREEN_HEIGHT * 2);
-                sbsHudVpL->vp.vscale[2] = 511;
-                sbsHudVpL->vp.vscale[3] = 0;
-                sbsHudVpL->vp.vtrans[0] = SCREEN_WIDTH;
-                sbsHudVpL->vp.vtrans[1] = (s16)(SCREEN_HEIGHT * 2);
-                sbsHudVpL->vp.vtrans[2] = 511;
-                sbsHudVpL->vp.vtrans[3] = 0;
-
-                sbsHudVpR->vp.vscale[0] = SCREEN_WIDTH;
-                sbsHudVpR->vp.vscale[1] = (s16)(SCREEN_HEIGHT * 2);
-                sbsHudVpR->vp.vscale[2] = 511;
-                sbsHudVpR->vp.vscale[3] = 0;
-                sbsHudVpR->vp.vtrans[0] = (s16)(SCREEN_WIDTH * 3);
-                sbsHudVpR->vp.vtrans[1] = (s16)(SCREEN_HEIGHT * 2);
-                sbsHudVpR->vp.vtrans[2] = 511;
-                sbsHudVpR->vp.vtrans[3] = 0;
-            }
+            /* Restore full-screen viewport coming out of the SBS world passes.
+             * 3D menu elements use the ortho shift instead of a half-screen
+             * viewport; texture-rect HUD elements bypass the viewport entirely. */
+            gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&D_8032CF00));
 
             /* --- Left eye HUD --- */
             /* Each eye pass is in its own compound block so that CALL_CANCELLABLE_EVENT's
              * local variable declarations (e.g. RenderHud_) don't collide. */
             {
                 gSBSHudEye = -1;
-                if (sbsHudVpL != NULL) {
-                    gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(sbsHudVpL));
-                }
+                /* Embed eye state in the DL so the interpreter reads it at execute-time.
+                 * gSBSHudEye is reset to 0 before exec_display_list() fires, so the
+                 * interpreter cannot read the C global; G_SBS_HUD_EYE carries it instead. */
+                gSBSHudSetEye(gDisplayListHead++, -1);
                 gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
                               0, BORDER_HEIGHT, SCREEN_WIDTH / 2, SCREEN_HEIGHT - BORDER_HEIGHT);
                 CALL_CANCELLABLE_EVENT(RenderHud) { render_hud(); }
@@ -485,9 +469,7 @@ void render_game(void) {
             /* --- Right eye HUD --- */
             {
                 gSBSHudEye = 1;
-                if (sbsHudVpR != NULL) {
-                    gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(sbsHudVpR));
-                }
+                gSBSHudSetEye(gDisplayListHead++, 1);
                 gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
                               SCREEN_WIDTH / 2, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
                 gSBSSkipTextAccumulation = 1; /* don't re-add labels already queued in left-eye pass */
@@ -517,9 +499,20 @@ void render_game(void) {
                  * Fix: snapshot both before the call and restore afterward,
                  * keeping only a non-NONE right-eye result (edge case guard). */
                 {
-                    u16 savedFadeTimer = gDialogColorFadeTimer;
+                    /* Save animation state so the right-eye render-only call
+                     * doesn't double-advance timers/state that the left-eye
+                     * pass already advanced for this frame. */
+                    u16 savedFadeTimer    = gDialogColorFadeTimer;
+                    s8  savedBoxState     = gDialogBoxState;
+                    f32 savedBoxTimer     = gDialogBoxOpenTimer;
+                    f32 savedBoxScale     = gDialogBoxScale;
+                    s16 savedScrollOffset = gDialogScrollOffsetY;
                     s16 rightIndex = render_menus_and_dialogs();
                     gDialogColorFadeTimer = savedFadeTimer;
+                    gDialogBoxState       = savedBoxState;
+                    gDialogBoxOpenTimer   = savedBoxTimer;
+                    gDialogBoxScale       = savedBoxScale;
+                    gDialogScrollOffsetY  = savedScrollOffset;
                     if (rightIndex != MENU_OPT_NONE) {
                         gMenuOptSelectIndex = rightIndex;
                         gSaveOptSelectIndex = rightIndex;
@@ -529,6 +522,7 @@ void render_game(void) {
 
             /* Restore for warp transitions below */
             gSBSHudEye = 0;
+            gSBSHudSetEye(gDisplayListHead++, 0); /* reset interpreter eye state */
             gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&D_8032CF00));
             gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
                           SCREEN_HEIGHT - BORDER_HEIGHT);

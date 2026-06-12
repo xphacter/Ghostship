@@ -8,6 +8,7 @@
 #include "camera.h"
 #include "envfx_snow.h"
 #include "level_geo.h"
+#include "port/Enhancements/StereoRendering.h"
 
 /**
  * Geo function that generates a displaylist for environment effects such as
@@ -19,6 +20,11 @@ Gfx *geo_envfx_main(s32 callContext, struct GraphNode *node, Mat4 mtxf) {
     Vec3s camTo;
     void *particleList;
     Gfx *gfx = NULL;
+    /* Cache the display list produced by the first (left) eye pass so the
+     * second (right) eye pass in SBS mode can reuse it without re-running
+     * the simulation.  The once-per-frame guard below would otherwise fire
+     * for the second pass (same gAreaUpdateCounter) and return NULL. */
+    static Gfx *sLastEnvFxGfx = NULL;
 
     if (callContext == GEO_CONTEXT_RENDER && gCurGraphNodeCamera != NULL) {
         struct GraphNodeGenerated *execNode = (struct GraphNodeGenerated *) node;
@@ -46,7 +52,12 @@ Gfx *geo_envfx_main(s32 callContext, struct GraphNode *node, Mat4 mtxf) {
 #endif
                 execNode->fnNode.node.flags = (execNode->fnNode.node.flags & 0xFF) | 0x400;
             }
+            sLastEnvFxGfx = gfx; /* cache for SBS second-eye pass */
             SET_HIGH_U16_OF_32(*params, gAreaUpdateCounter);
+        } else if (gSBSEye != 0) {
+            /* SBS right-eye pass: same frame, guard already fired.
+             * Reuse the display list the left-eye pass built. */
+            gfx = sLastEnvFxGfx;
         }
     } else if (callContext == GEO_CONTEXT_AREA_INIT) {
         // Give these arguments some dummy values. Not used in ENVFX_MODE_NONE

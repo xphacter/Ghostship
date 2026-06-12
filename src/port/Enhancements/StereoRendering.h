@@ -67,6 +67,24 @@ static inline int sbsHudBaseX(int x) {
     return (x >> 1) + (gSBSHudEye == 1 ? 160 : 0);
 }
 
+/**
+ * Emit a display-list command that sets the interpreter's internal SBS HUD
+ * eye variable at DL-execute time.  This is necessary because gSBSHudEye is
+ * reset to 0 before exec_display_list() is called, so the interpreter can
+ * never read the correct value from the C global directly.
+ *
+ * Opcode 0x4A == G_SBS_HUD_EYE (lus_gbi.h).  The eye value occupies bits
+ * 7-0 of word 0, sign-extended to int8_t by the handler.
+ *
+ * eye: -1 = left eye, 0 = normal/reset, +1 = right eye
+ */
+#define gSBSHudSetEye(pkt, eye) \
+    do { \
+        Gfx *_sbsEyeG = (Gfx *)(pkt); \
+        _sbsEyeG->words.w0 = (u32)(0x4Au << 24) | ((u32)((eye) & 0xFF)); \
+        _sbsEyeG->words.w1 = 0; \
+    } while (0)
+
 #ifdef __cplusplus
 }
 

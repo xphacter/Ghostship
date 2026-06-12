@@ -26,6 +26,7 @@
 #include "port/interpolation/FrameInterpolation.h"
 #include <ship/utils/binarytools/endianness.h>
 #include "port/events/list/EngineEvent.h"
+#include "port/Enhancements/StereoRendering.h"
 
 #ifdef VERSION_EU
 #undef LANGUAGE_FUNCTION
@@ -204,7 +205,25 @@ void create_dl_ortho_matrix(void) {
 
     create_dl_identity_matrix();
 
-    guOrtho(matrix, 0.0f, SCREEN_WIDTH, 0.0f, SCREEN_HEIGHT, -10.0f, 10.0f, 1.0f);
+    /* In SBS mode we keep the full-screen viewport active (so GfxDrawRectangle
+     * and the world-rendering viewport don't interfere) and instead shift the
+     * ortho left/right bounds so [0, SCREEN_WIDTH] content maps to the correct
+     * physical half via the full-screen NDC → screen transform:
+     *
+     *   left  eye (gSBSHudEye == -1):  ortho [0,       2*SW]  → NDC [-1,  0]
+     *   right eye (gSBSHudEye ==  1):  ortho [-SW,      SW]   → NDC [ 0, +1]
+     *   normal    (gSBSHudEye ==  0):  ortho [0,        SW]   → NDC [-1, +1]
+     *
+     * The scissor set by area.c clips each eye to its physical screen half. */
+    float oLeft = 0.0f;
+    float oRight = (float)SCREEN_WIDTH;
+    if (gSBSHudEye == -1) {
+        oRight = (float)(SCREEN_WIDTH * 2);
+    } else if (gSBSHudEye == 1) {
+        oLeft = -(float)SCREEN_WIDTH;
+    }
+
+    guOrtho(matrix, oLeft, oRight, 0.0f, SCREEN_HEIGHT, -10.0f, 10.0f, 1.0f);
 
     // Should produce G_RDPHALF_1 in Fast3D
     gSPPerspNormalize(gDisplayListHead++, 0xFFFF);
