@@ -12,6 +12,32 @@
 #include "screen_transition.h"
 #include "segment2.h"
 #include "sm64.h"
+#include "port/Enhancements/StereoRendering.h"
+
+/*
+ * SBS half-screen viewports for warp transitions.
+ *
+ * dl_proj_mtx_fullscreen bakes a full-screen viewport into its display list.
+ * In SBS mode we emit gSPViewport immediately after that sub-DL returns so
+ * the half-screen viewport is active when the transition geometry is drawn.
+ *
+ * N64 viewport units: vscale/vtrans values are in quarter-pixels (x4).
+ *   Full screen : vscale.x = 640 (160 half-width), vtrans.x = 640 (centre 160)
+ *   Left  half  : vscale.x = 320 ( 80 half-width), vtrans.x = 320 (centre  80)
+ *   Right half  : vscale.x = 320 ( 80 half-width), vtrans.x = 960 (centre 240)
+ * Vertical values stay full-screen in both halves.
+ */
+static Vp sSBSTransVpLeft  = {{{ SCREEN_WIDTH,     SCREEN_HEIGHT * 2, 0x1FF, 0 },
+                                 { SCREEN_WIDTH,     SCREEN_HEIGHT * 2, 0x1FF, 0 }}};
+static Vp sSBSTransVpRight = {{{ SCREEN_WIDTH,     SCREEN_HEIGHT * 2, 0x1FF, 0 },
+                                 { SCREEN_WIDTH * 3, SCREEN_HEIGHT * 2, 0x1FF, 0 }}};
+
+/* Emit a half-screen viewport override after dl_proj_mtx_fullscreen in SBS mode. */
+static inline void sbs_transition_viewport(void) {
+    if (gSBSEye == 0) return;
+    Vp *vp = (gSBSEye == -1) ? &sSBSTransVpLeft : &sSBSTransVpRight;
+    gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(vp));
+}
 
 u8 sTransitionColorFadeCount[4] = { 0 };
 u16 sTransitionTextureFadeCount[2] = { 0 };
@@ -64,6 +90,7 @@ s32 dl_transition_color(s8 fadeTimer, u8 transTime, struct WarpTransitionData *t
 
     if (verts != NULL) {
         gSPDisplayList(gDisplayListHead++, dl_proj_mtx_fullscreen);
+        sbs_transition_viewport(); /* SBS: override fullscreen viewport with half-screen */
         gDPSetCombineMode(gDisplayListHead++, G_CC_SHADE, G_CC_SHADE);
         gDPSetRenderMode(gDisplayListHead++, G_RM_AA_XLU_SURF, G_RM_AA_XLU_SURF2);
         gSPVertex(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(verts), 4, 0);
@@ -187,6 +214,7 @@ s32 render_textured_transition(s8 fadeTimer, s8 transTime, struct WarpTransition
     if (verts != NULL) {
         load_tex_transition_vertex(verts, fadeTimer, transData, centerTransX, centerTransY, texTransRadius, transTexType);
         gSPDisplayList(gDisplayListHead++, dl_proj_mtx_fullscreen);
+        sbs_transition_viewport(); /* SBS: override fullscreen viewport with half-screen */
         gDPSetCombineMode(gDisplayListHead++, G_CC_SHADE, G_CC_SHADE);
         gDPSetRenderMode(gDisplayListHead++, G_RM_AA_OPA_SURF, G_RM_AA_OPA_SURF2);
         gSPVertex(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(verts), 8, 0);

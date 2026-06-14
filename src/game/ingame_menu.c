@@ -205,18 +205,22 @@ void create_dl_ortho_matrix(void) {
 
     create_dl_identity_matrix();
 
-    /* In SBS mode we keep the full-screen viewport active (so GfxDrawRectangle
-     * and the world-rendering viewport don't interfere) and instead shift the
-     * ortho left/right bounds so [0, SCREEN_WIDTH] content maps to the correct
-     * physical half via the full-screen NDC → screen transform:
-     *
-     *   left  eye (gSBSHudEye == -1):  ortho [0,       2*SW]  → NDC [-1,  0]
-     *   right eye (gSBSHudEye ==  1):  ortho [-SW,      SW]   → NDC [ 0, +1]
-     *   normal    (gSBSHudEye ==  0):  ortho [0,        SW]   → NDC [-1, +1]
-     *
-     * The scissor set by area.c clips each eye to its physical screen half. */
     float oLeft = 0.0f;
     float oRight = (float)SCREEN_WIDTH;
+    /* Shift the ortho projection bounds for the HUD pass only.
+     *
+     * HUD pass (gSBSHudEye set, full-screen viewport): the ortho shift maps
+     * design [0,SW] into the left or right screen half via the NDC transform.
+     *   left  eye: ortho [0,    2*SW]  → NDC [-1,  0]
+     *   right eye: ortho [-SW,   SW]  → NDC [ 0, +1]
+     *
+     * World-pass geo callbacks (gSBSHudEye == 0, half-screen viewport):
+     * rendering_graph_node.c already halves the viewport extent and shifts the
+     * centre for each eye, so plain ortho [0, SW] + the half-screen viewport
+     * maps design coordinates identically in both halves — the right eye
+     * becomes a zero-parallax copy of the left eye (correct for flat 2D
+     * overlay screens like the star select).  Applying an ortho shift here
+     * would double-compress vertex positions. */
     if (gSBSHudEye == -1) {
         oRight = (float)(SCREEN_WIDTH * 2);
     } else if (gSBSHudEye == 1) {
@@ -228,7 +232,14 @@ void create_dl_ortho_matrix(void) {
     // Should produce G_RDPHALF_1 in Fast3D
     gSPPerspNormalize(gDisplayListHead++, 0xFFFF);
 
-    gSPMatrix(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(matrix), G_MTX_PROJECTION | G_MTX_MUL | G_MTX_NOPUSH);
+    /* Use LOAD (not MUL) so the projection is purely the ortho matrix.
+     * In SBS mode the camera is eye-shifted, making the world-pass perspective
+     * matrix asymmetric.  MUL would fold that shift into the ortho and slide
+     * vertex-rendered 2D text horizontally in the right eye.  LOAD discards
+     * any accumulated perspective, giving a clean ortho transform for both
+     * eyes and for non-SBS mode (no behavioural difference when the prior
+     * projection was effectively identity). */
+    gSPMatrix(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(matrix), G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH);
 }
 
 u8 *alloc_ia8_text_from_i1(u16 *in, s16 width, s16 height) {
@@ -497,7 +508,7 @@ void print_hud_lut_string(s8 hudLUT, s16 x, s16 y, const u8 *str) {
     s32 strPos = 0;
     void **hudLUT1 = segmented_to_virtual(menu_hud_lut); // Japanese Menu HUD Color font
     void **hudLUT2 = segmented_to_virtual(main_hud_lut); // 0-9 A-Z HUD Color Font
-    u32 curX = x;
+    u32 curX = sbsHudBaseX(x); // SBS: compress x into the current eye's screen half
     u32 curY = y;
 
     u32 xStride; // X separation
@@ -508,12 +519,24 @@ void print_hud_lut_string(s8 hudLUT, s16 x, s16 y, const u8 *str) {
         xStride = ROM_JP ? 14 : 12;
     }
 
+    /* SBS: the half-screen is 0.5× the design canvas.  Halve xStride so
+     * successive characters stay inside their eye's 160-px half, halve the
+     * render width so each glyph doesn't overlap the next, and double dsdx
+     * so the full 16-texel glyph is sampled into those 8 screen pixels.
+     * sbsHudBaseX already placed curX in the correct half, and because the
+     * design positions are evenly spaced, start-only sbsHudBaseX + halved
+     * stride is equivalent to per-character sbsHudBaseX. */
+    int sbs_eye = (gSBSHudEye != 0) ? gSBSHudEye : gSBSEye;
+    int charW  = (sbs_eye != 0) ? 8        : 16;
+    int dsdx_v = (sbs_eye != 0) ? (2 << 10) : (1 << 10);
+    if (sbs_eye != 0) xStride >>= 1;
+
     while (str[strPos] != GLOBAR_CHAR_TERMINATOR) {
         if(!ROM_JP){
             switch (str[strPos]) {
     #ifdef VERSION_EU
                 case GLOBAL_CHAR_SPACE:
-                    curX += xStride / 2;
+                    curX += xStride / 2;   /* xStride already halved in SBS */
                     break;
                 case HUD_CHAR_A_UMLAUT:
                     print_hud_char_umlaut(curX, curY, ASCII_TO_DIALOG('A'));
@@ -529,7 +552,7 @@ void print_hud_lut_string(s8 hudLUT, s16 x, s16 y, const u8 *str) {
                     break;
     #else
                 case GLOBAL_CHAR_SPACE:
-                    curX += 8;
+                    curX += (sbs_eye != 0) ? 4 : 8;
                     break;
     #endif
                 default:
@@ -545,8 +568,8 @@ void print_hud_lut_string(s8 hudLUT, s16 x, s16 y, const u8 *str) {
                     }
 
                     gSPDisplayList(gDisplayListHead++, dl_rgba16_load_tex_block);
-                    gSPWideTextureRectangle(gDisplayListHead++, curX << 2, curY << 2, (curX + 16) << 2,
-                                        (curY + 16) << 2, G_TX_RENDERTILE, 0, 0, 1 << 10, 1 << 10);
+                    gSPWideTextureRectangle(gDisplayListHead++, curX << 2, curY << 2, (curX + charW) << 2,
+                                        (curY + 16) << 2, G_TX_RENDERTILE, 0, 0, dsdx_v, 1 << 10);
 
                     curX += xStride;
             }
@@ -563,8 +586,8 @@ void print_hud_lut_string(s8 hudLUT, s16 x, s16 y, const u8 *str) {
             }
 
             gSPDisplayList(gDisplayListHead++, dl_rgba16_load_tex_block);
-            gSPWideTextureRectangle(gDisplayListHead++, curX << 2, curY << 2, (curX + 16) << 2,
-                                (curY + 16) << 2, G_TX_RENDERTILE, 0, 0, 1 << 10, 1 << 10);
+            gSPWideTextureRectangle(gDisplayListHead++, curX << 2, curY << 2, (curX + charW) << 2,
+                                (curY + 16) << 2, G_TX_RENDERTILE, 0, 0, dsdx_v, 1 << 10);
 
             curX += xStride;
         }
@@ -591,24 +614,33 @@ void print_menu_char_umlaut(s16 x, s16 y, u8 chr) {
 void print_menu_generic_string(s16 x, s16 y, const u8 *str) {
     UNUSED s8 mark = DIALOG_MARK_NONE; // unused in EU
     s32 strPos = 0;
-    u32 curX = x;
+    /* SBS: track the design-space x position separately and apply sbsHudBaseX
+     * to each character individually.  This prevents long strings from drifting
+     * past the 160-px half-screen boundary: if we only sbsHudBaseX the start
+     * and then advance curX by full design widths, each additional character
+     * overshoots the compressed half-screen space.  Per-character sbsHudBaseX
+     * keeps every glyph inside its eye's half regardless of string length.
+     * When SBS is disabled (eye == 0) sbsHudBaseX is a no-op, so non-SBS
+     * behaviour is identical to the original. */
+    s32 designX = x;
     u32 curY = y;
     void **fontLUT = segmented_to_virtual(menu_font_lut);
 
     while (str[strPos] != DIALOG_CHAR_TERMINATOR) {
+        u32 curX = (u32) sbsHudBaseX(designX); // compress to current eye's half
         switch (str[strPos]) {
 #ifdef VERSION_EU
             case DIALOG_CHAR_UPPER_A_UMLAUT:
                 print_menu_char_umlaut(curX, curY, ASCII_TO_DIALOG('A'));
-                curX += gDialogCharWidths[str[strPos]];
+                designX += gDialogCharWidths[str[strPos]];
                 break;
             case DIALOG_CHAR_UPPER_U_UMLAUT:
                 print_menu_char_umlaut(curX, curY, ASCII_TO_DIALOG('U'));
-                curX += gDialogCharWidths[str[strPos]];
+                designX += gDialogCharWidths[str[strPos]];
                 break;
             case DIALOG_CHAR_UPPER_O_UMLAUT:
                 print_menu_char_umlaut(curX, curY, ASCII_TO_DIALOG('O'));
-                curX += gDialogCharWidths[str[strPos]];
+                designX += gDialogCharWidths[str[strPos]];
                 break;
 #else
             case DIALOG_CHAR_DAKUTEN:
@@ -619,27 +651,40 @@ void print_menu_generic_string(s16 x, s16 y, const u8 *str) {
                 break;
 #endif
             case DIALOG_CHAR_SPACE:
-                curX += 4;
+                designX += 4;
                 break;
-            default:
+            default: {
+                /* SBS: the half-screen is 0.5× the design canvas, so every
+                 * glyph must be drawn half as wide (4 px instead of 8 px).
+                 * Double dsdx so the full 8-texel glyph is sampled into those
+                 * 4 pixels rather than showing only the left half of the glyph.
+                 * Per-character sbsHudBaseX already places glyphs 4 px apart,
+                 * matching the 4 px width — no overlap, no overflow.
+                 * In non-SBS mode (eye == 0) nothing changes. */
+                int sbs_eye = (gSBSHudEye != 0) ? gSBSHudEye : gSBSEye;
+                int charW  = (sbs_eye != 0) ? 4 : 8;
+                int dsdx_v = (sbs_eye != 0) ? (2 << 10) : (1 << 10);
+
                 gDPSetTextureImage(gDisplayListHead++, G_IM_FMT_IA, G_IM_SIZ_8b, 1, fontLUT[str[strPos]]);
                 gDPLoadSync(gDisplayListHead++);
                 gDPLoadBlock(gDisplayListHead++, G_TX_LOADTILE, 0, 0, 8 * 8 - 1, CALC_DXT(8, G_IM_SIZ_8b_BYTES));
-                gSPWideTextureRectangle(gDisplayListHead++, curX << 2, curY << 2, (curX + 8) << 2,
-                                    (curY + 8) << 2, G_TX_RENDERTILE, 0, 0, 1 << 10, 1 << 10);
+                gSPWideTextureRectangle(gDisplayListHead++, curX << 2, curY << 2, (curX + charW) << 2,
+                                    (curY + 8) << 2, G_TX_RENDERTILE, 0, 0, dsdx_v, 1 << 10);
 
 #ifndef VERSION_EU
                 if (mark != DIALOG_MARK_NONE) {
                     gDPSetTextureImage(gDisplayListHead++, G_IM_FMT_IA, G_IM_SIZ_8b, 1, fontLUT[DIALOG_CHAR_MARK_START + mark]);
                     gDPLoadSync(gDisplayListHead++);
                     gDPLoadBlock(gDisplayListHead++, G_TX_LOADTILE, 0, 0, 8 * 8 - 1, CALC_DXT(8, G_IM_SIZ_8b_BYTES));
-                    gSPWideTextureRectangle(gDisplayListHead++, (curX + 6) << 2, (curY - 7) << 2,
-                                        (curX + 6 + 8) << 2, (curY - 7 + 8) << 2, G_TX_RENDERTILE, 0, 0, 1 << 10, 1 << 10);
+                    int markOff = (sbs_eye != 0) ? 3 : 6; // half offset in SBS
+                    gSPWideTextureRectangle(gDisplayListHead++, (curX + markOff) << 2, (curY - 7) << 2,
+                                        (curX + markOff + charW) << 2, (curY - 7 + 8) << 2, G_TX_RENDERTILE, 0, 0, dsdx_v, 1 << 10);
 
                     mark = DIALOG_MARK_NONE;
                 }
 #endif
-                curX += ROM_JP ? 9 : gDialogCharWidths[str[strPos]];
+                designX += ROM_JP ? 9 : gDialogCharWidths[str[strPos]];
+            }
         }
         strPos++;
     }

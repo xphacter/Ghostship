@@ -1,6 +1,7 @@
 #pragma once
 
 #include "port/ui/cvar_prefixes.h"
+#include "libultraship/bridge/consolevariablebridge.h"
 
 /**
  * StereoRendering.h
@@ -63,8 +64,30 @@ extern int gSBSSkipTextAccumulation;
  *   no SBS:    x -> x            (identity)
  */
 static inline int sbsHudBaseX(int x) {
-    if (gSBSHudEye == 0) return x;
-    return (x >> 1) + (gSBSHudEye == 1 ? 160 : 0);
+    /*
+     * Two rendering contexts, two mappings:
+     *
+     * HUD pass (gSBSHudEye set):
+     *   create_dl_ortho_matrix() shifts the ortho bounds so geometry lands in
+     *   the correct screen half via the full-screen viewport.  Texture rects
+     *   bypass the matrix stack, so we replicate that same shift manually:
+     *     left  eye: x*0.5 + 0     right eye: x*0.5 + 160
+     *   (matches the ortho [0,640] / [-320,320] + full-screen viewport split)
+     *
+     * World-pass geo callbacks (gSBSEye set, gSBSHudEye == 0):
+     *   Plain ortho [0,320] + half-screen viewport handles geometry.
+     *   Texture rects need an empirically-determined correction:
+     *     left  eye: x*0.5 - 27    right eye: x*0.5 + 186
+     *   (calibrated for file select, star select, level title cards)
+     */
+    if (gSBSHudEye != 0) {
+        int base = (int)(x * 0.5f + 0.5f);
+        return base + (gSBSHudEye == 1 ? 160 : 0);
+    } else if (gSBSEye != 0) {
+        int base = (int)(x * 0.5f + 0.5f);
+        return base + (gSBSEye == 1 ? 186 : -27);
+    }
+    return x;
 }
 
 /**

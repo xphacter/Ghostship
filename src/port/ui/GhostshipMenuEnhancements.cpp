@@ -164,6 +164,7 @@ void GhostshipMenu::AddMenuEnhancements() {
             "Skip HUD rendering in side-by-side mode.\n"
             "Useful while debugging world rendering."));
 
+
     path = { "Enhancements", "Gameplay", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", path.sidebarName, 1);
     path.column = SECTION_COLUMN_1;

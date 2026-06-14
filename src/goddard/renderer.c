@@ -22,6 +22,7 @@
 #include "game/memory.h"
 #include "assets/textures/intro_raw.h"
 #include "port/interpolation/FrameInterpolation.h"
+#include "port/Enhancements/StereoRendering.h"
 
 #define MAX_GD_DLS 1000
 #define OS_MESG_SI_COMPLETE 0x33333333
@@ -2145,9 +2146,16 @@ void set_gd_mtx_parameters(s32 params) {
 }
 
 /**
- * Adds a viewport to the current display list based on the current active view
+ * Adds a viewport to the current display list based on the current active view.
+ * In SBS mode, skip the override: geo_process_root has already set up the
+ * correct half-screen viewport for the current eye, and the same DL is reused
+ * for both eyes, so no viewport command should be baked in.
  */
 static void gd_dl_viewport(void) {
+    if (gSBSEye != 0) {
+        return;
+    }
+
     Vp *vp;
 
     vp = &DL_CURRENT_VP(sCurrentGdDl);
@@ -2943,13 +2951,21 @@ void update_cursor(void) {
     sHandView->upperLeft.y = (f32) gGdCtrl.csrY;
 
     // Make hand display list
-    begin_gddl(sHandShape->dlNums[gGdFrameBufNum]);
-    if (gGdCtrl.dragging) {
-        gd_put_sprite((u16 *) gd_texture_hand_closed, sHandView->upperLeft.x, sHandView->upperLeft.y, 0x20, 0x20);
-    } else {
-        gd_put_sprite((u16 *) gd_texture_hand_open, sHandView->upperLeft.x, sHandView->upperLeft.y, 0x20, 0x20);
+    {
+        u16 *handTex = (u16 *)(gGdCtrl.dragging ? gd_texture_hand_closed : gd_texture_hand_open);
+        s32 csrX = (s32) sHandView->upperLeft.x;
+        s32 csrY = (s32) sHandView->upperLeft.y;
+        begin_gddl(sHandShape->dlNums[gGdFrameBufNum]);
+        if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
+            /* SBS: draw the cursor in both eye halves so each eye's scissor
+             * sees it.  Compress x to 0-160 for left half, 160-320 for right. */
+            gd_put_sprite(handTex, csrX >> 1,         csrY, 0x20, 0x20);
+            gd_put_sprite(handTex, (csrX >> 1) + 160, csrY, 0x20, 0x20);
+        } else {
+            gd_put_sprite(handTex, csrX, csrY, 0x20, 0x20);
+        }
+        gd_enddlsplist_parent();
     }
-    gd_enddlsplist_parent();
 
     if (sHandView->upperLeft.x < sHandView->parent->upperLeft.x) {
         sHandView->upperLeft.x = sHandView->parent->upperLeft.x;

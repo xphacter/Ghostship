@@ -368,15 +368,22 @@ void add_glyph_texture(s8 glyphIndex) {
  * Renders the glyph that's set at the given position.
  */
 void render_textrect(s32 x, s32 y, s32 pos) {
-    s32 rectBaseX = sbsHudBaseX(x) + pos * 12;
+    int sbs_eye = (gSBSHudEye != 0) ? gSBSHudEye : gSBSEye;
+    /* In SBS mode each glyph is placed at the per-character mapped x so that
+     * characters are spaced correctly within the 160-px half (stride 12 → 6). */
+    s32 rectBaseX = (sbs_eye != 0) ? sbsHudBaseX(x + pos * 12) : (x + pos * 12);
     s32 rectBaseY = 224 - y;
-    s32 rectX;
-    s32 rectY;
+    s32 rectX = rectBaseX;
+    s32 rectY = rectBaseY;
 
-    rectX = rectBaseX;
-    rectY = rectBaseY;
-    gSPWideTextureRectangle(gDisplayListHead++, rectX << 2, rectY << 2, (rectX + 15) << 2,
-                        (rectY + 15) << 2, G_TX_RENDERTILE, 0, 0, 4 << 10, 1 << 10);
+    if (sbs_eye != 0) {
+        /* Half-width glyph (8px) with doubled dsdx to keep texture coverage. */
+        gSPWideTextureRectangle(gDisplayListHead++, rectX << 2, rectY << 2, (rectX + 7) << 2,
+                            (rectY + 15) << 2, G_TX_RENDERTILE, 0, 0, 8 << 10, 1 << 10);
+    } else {
+        gSPWideTextureRectangle(gDisplayListHead++, rectX << 2, rectY << 2, (rectX + 15) << 2,
+                            (rectY + 15) << 2, G_TX_RENDERTILE, 0, 0, 4 << 10, 1 << 10);
+    }
 }
 
 /**

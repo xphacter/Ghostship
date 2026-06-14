@@ -84,6 +84,11 @@ struct GraphNodeObject gMirrorMario;  // copy of Mario's geo node for drawing mi
 /**
  * Geo node script that draws Mario's head on the title screen.
  */
+/* Cached DL pointer so the SBS right-eye pass can reuse it without
+ * calling gdm_gettestdl a second time (which would double-advance
+ * Goddard's simulation state and corrupt the hand animation / DL pool). */
+static Gfx *sGoddardSBSGfx = NULL;
+
 Gfx *geo_draw_mario_head_goddard(s32 callContext, struct GraphNode *node, Mat4 *c) {
     Gfx *gfx = NULL;
     s16 sfx = 0;
@@ -91,19 +96,22 @@ Gfx *geo_draw_mario_head_goddard(s32 callContext, struct GraphNode *node, Mat4 *
     UNUSED Mat4 *transform = c;
     FrameInterpolation_ShouldInterpolateFrame(false);
     if (callContext == GEO_CONTEXT_RENDER) {
-        if (gPlayer1Controller->controllerData != NULL && !gWarpTransition.isActive) {
-            gd_copy_p1_contpad(gPlayer1Controller->controllerData);
-        }
         FrameInterpolation_RecordOpenChild("geo_draw_mario_head_goddard", (uintptr_t)node);
-        gfx = (Gfx *) PHYSICAL_TO_VIRTUAL(gdm_gettestdl(asGenerated->parameter));
-        /* In SBS mode geo_process_root runs twice; only assign the vblank callback
-         * on the first (left-eye or non-SBS) pass so it fires exactly once. */
         if (gSBSEye != 1) {
+            /* Normal path and SBS left-eye: advance Goddard state + build DL. */
+            if (gPlayer1Controller->controllerData != NULL && !gWarpTransition.isActive) {
+                gd_copy_p1_contpad(gPlayer1Controller->controllerData);
+            }
+            gfx = (Gfx *) PHYSICAL_TO_VIRTUAL(gdm_gettestdl(asGenerated->parameter));
+            sGoddardSBSGfx = gfx;
             gGoddardVblankCallback = gd_vblank;
+            sfx = gd_sfx_to_play();
+            play_menu_sounds(sfx);
+        } else {
+            /* SBS right-eye: reuse the left-eye DL; do NOT advance state again. */
+            gfx = sGoddardSBSGfx;
         }
-        sfx = gd_sfx_to_play();
         FrameInterpolation_RecordCloseChild();
-        play_menu_sounds(sfx);
     }
     FrameInterpolation_ShouldInterpolateFrame(true);
     return gfx;

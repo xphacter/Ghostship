@@ -499,20 +499,74 @@ void render_game(void) {
                  * Fix: snapshot both before the call and restore afterward,
                  * keeping only a non-NONE right-eye result (edge case guard). */
                 {
-                    /* Save animation state so the right-eye render-only call
-                     * doesn't double-advance timers/state that the left-eye
-                     * pass already advanced for this frame. */
-                    u16 savedFadeTimer    = gDialogColorFadeTimer;
-                    s8  savedBoxState     = gDialogBoxState;
-                    f32 savedBoxTimer     = gDialogBoxOpenTimer;
-                    f32 savedBoxScale     = gDialogBoxScale;
-                    s16 savedScrollOffset = gDialogScrollOffsetY;
+                    /*
+                     * Save ALL mutable dialog/menu state before the right-eye
+                     * render-only call.  The left-eye pass already advanced
+                     * every timer and text-position variable for this frame;
+                     * the right-eye call must only DRAW, not advance.
+                     *
+                     * Variables not previously saved (root cause of the
+                     * dialog crash and infinite-repeat bugs):
+                     *   gDialogTextPos       -- character index in dialog string
+                     *   gDialogLineNum       -- which line is being drawn
+                     *   gLastDialogLineNum   -- line number from previous frame
+                     *   gLastDialogPageStrPos-- string position of last page break
+                     *   gLastDialogResponse  -- YES/NO response tracking
+                     *   gMenuHoldKeyIndex    -- which key is held
+                     *   gMenuHoldKeyTimer    -- hold-repeat timer
+                     *   gDialogResponse      -- final response value
+                     *   gDialogTextAlpha     -- text fade alpha
+                     *   gDialogVariable      -- NPC variable (e.g. star count)
+                     *   gCutsceneMsgXOffset  -- cutscene subtitle position
+                     *   gCutsceneMsgYOffset
+                     */
+                    /* Variables already declared in ingame_menu.h */
+                    u16 savedFadeTimer       = gDialogColorFadeTimer;
+                    s8  savedBoxState        = gDialogBoxState;
+                    f32 savedBoxTimer        = gDialogBoxOpenTimer;
+                    f32 savedBoxScale        = gDialogBoxScale;
+                    s16 savedScrollOffset    = gDialogScrollOffsetY;
+                    s32 savedDialogResponse  = gDialogResponse;
+                    u16 savedTextAlpha       = gDialogTextAlpha;
+                    s8  savedLastLineNum     = gLastDialogLineNum;
+                    s32 savedDialogVariable  = gDialogVariable;
+                    s16 savedCutsceneMsgX    = gCutsceneMsgXOffset;
+                    s16 savedCutsceneMsgY    = gCutsceneMsgYOffset;
+                    /* Variables only defined in ingame_menu.c -- forward-declare here */
+                    extern s16 gDialogTextPos;
+                    extern s8  gDialogLineNum;
+                    extern s16 gLastDialogPageStrPos;
+                    extern s8  gLastDialogResponse;
+                    extern u8  gMenuHoldKeyIndex;
+                    extern u8  gMenuHoldKeyTimer;
+                    s16 savedTextPos         = gDialogTextPos;
+                    s8  savedLineNum         = gDialogLineNum;
+                    s16 savedLastPageStrPos  = gLastDialogPageStrPos;
+                    s8  savedLastResponse    = gLastDialogResponse;
+                    u8  savedHoldKeyIndex    = gMenuHoldKeyIndex;
+                    u8  savedHoldKeyTimer    = gMenuHoldKeyTimer;
+
                     s16 rightIndex = render_menus_and_dialogs();
+
+                    /* Restore all state so this frame's net advance = 1x (left eye only). */
                     gDialogColorFadeTimer = savedFadeTimer;
                     gDialogBoxState       = savedBoxState;
                     gDialogBoxOpenTimer   = savedBoxTimer;
                     gDialogBoxScale       = savedBoxScale;
                     gDialogScrollOffsetY  = savedScrollOffset;
+                    gDialogResponse       = savedDialogResponse;
+                    gDialogTextAlpha      = savedTextAlpha;
+                    gLastDialogLineNum    = savedLastLineNum;
+                    gDialogVariable       = savedDialogVariable;
+                    gCutsceneMsgXOffset   = savedCutsceneMsgX;
+                    gCutsceneMsgYOffset   = savedCutsceneMsgY;
+                    gDialogTextPos        = savedTextPos;
+                    gDialogLineNum        = savedLineNum;
+                    gLastDialogPageStrPos = savedLastPageStrPos;
+                    gLastDialogResponse   = savedLastResponse;
+                    gMenuHoldKeyIndex     = savedHoldKeyIndex;
+                    gMenuHoldKeyTimer     = savedHoldKeyTimer;
+
                     if (rightIndex != MENU_OPT_NONE) {
                         gMenuOptSelectIndex = rightIndex;
                         gSaveOptSelectIndex = rightIndex;
@@ -554,8 +608,52 @@ void render_game(void) {
 
         if (gWarpTransition.isActive) {
             if (gWarpTransDelay == 0) {
-                gWarpTransition.isActive = !render_screen_transition(0, gWarpTransition.type, gWarpTransition.time,
-                                                                     &gWarpTransition.data);
+                s32 transitionDone;
+                if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
+                    /*
+                     * SBS double-pass transition rendering.
+                     *
+                     * render_screen_transition() calls dl_proj_mtx_fullscreen which bakes
+                     * a full-screen viewport.  screen_transition.c's sbs_transition_viewport()
+                     * helper overrides that viewport with the appropriate half-screen one
+                     * when gSBSEye != 0, so the full transition effect maps into each half.
+                     *
+                     * Both passes must render the same animation frame, so we save the
+                     * timer state before the first call and restore it before the second.
+                     * After the second call the timers sit at "advanced-once" state, correct.
+                     */
+                    u8  savedColorCount[4];
+                    u16 savedTexCount[2];
+                    memcpy(savedColorCount, sTransitionColorFadeCount, sizeof(savedColorCount));
+                    memcpy(savedTexCount,   sTransitionTextureFadeCount, sizeof(savedTexCount));
+
+                    /* Left eye */
+                    gSBSEye = -1;
+                    gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                                  0, BORDER_HEIGHT, SCREEN_WIDTH / 2, SCREEN_HEIGHT - BORDER_HEIGHT);
+                    transitionDone = render_screen_transition(0, gWarpTransition.type, gWarpTransition.time,
+                                                              &gWarpTransition.data);
+
+                    /* Restore timers so the right eye renders the same frame */
+                    memcpy(sTransitionColorFadeCount,  savedColorCount, sizeof(savedColorCount));
+                    memcpy(sTransitionTextureFadeCount, savedTexCount,   sizeof(savedTexCount));
+
+                    /* Right eye */
+                    gSBSEye = 1;
+                    gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                                  SCREEN_WIDTH / 2, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+                    render_screen_transition(0, gWarpTransition.type, gWarpTransition.time,
+                                             &gWarpTransition.data);
+
+                    /* Restore normal state */
+                    gSBSEye = 0;
+                    gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE,
+                                  0, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+                } else {
+                    transitionDone = render_screen_transition(0, gWarpTransition.type, gWarpTransition.time,
+                                                              &gWarpTransition.data);
+                }
+                gWarpTransition.isActive = !transitionDone;
                 if (!gWarpTransition.isActive) {
                     if (gWarpTransition.type & 1) {
                         gWarpTransition.pauseRendering = TRUE;
