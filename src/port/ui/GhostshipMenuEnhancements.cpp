@@ -163,6 +163,34 @@ void GhostshipMenu::AddMenuEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Skip HUD rendering in side-by-side mode.\n"
             "Useful while debugging world rendering."));
+    AddWidget(path, "SBS Press Start X", WIDGET_CVAR_SLIDER_INT)
+        .CVar(CVAR_ENHANCEMENT("SBSPressStartX"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0) == 0;
+        })
+        .Options(IntSliderOptions()
+                     .Min(0)
+                     .Max(320)
+                     .DefaultValue(60)
+                     .ShowButtons(true)
+                     .Format("%d")
+                     .Tooltip("Design-space x position of the PRESS START text in SBS mode.\n"
+                              "Tune until the text appears correctly in each eye half."));
+    AddWidget(path, "SBS Mario Head Depth", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_ENHANCEMENT("SBSGoddardDepth"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0) == 0;
+        })
+        .Options(FloatSliderOptions()
+                     .Min(0.0f)
+                     .Max(40.0f)
+                     .DefaultValue(8.0f)
+                     .ShowButtons(true)
+                     .Format("%.1f")
+                     .Tooltip("Horizontal parallax for the Goddard Mario face in SBS mode.\n"
+                              "Higher values make the head pop out more. 0 = flat."));
 
 
     path = { "Enhancements", "Gameplay", SECTION_COLUMN_1 };

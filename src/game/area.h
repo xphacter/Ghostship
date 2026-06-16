@@ -139,6 +139,7 @@ extern_s s16 gCurrAreaIndex;
 extern_s s16 gSavedCourseNum;
 extern_s s16 gMenuOptSelectIndex;
 extern_s s16 gSaveOptSelectIndex;
+extern_s s8  gSBSActive; /* 1 when SBS (Stereoscopic3D) mode is enabled */
 
 extern_s struct SpawnInfo *gMarioSpawnInfo;
 

@@ -2611,6 +2611,14 @@ void gd_create_ortho_matrix(f32 l, f32 r, f32 b, f32 t, f32 n, f32 f) {
 
     func_801A3324(0.0f, 0.0f, 0.0f);
     next_mtx();
+    /* SBS: apply per-eye horizontal shift for Goddard face depth. */
+    if (gSBSEye != 0) {
+        f32 eyeShift = -(f32)gSBSEye * CVarGetFloat(CVAR_ENHANCEMENT("SBSGoddardDepth"), 8.0f);
+        guTranslate(&DL_CURRENT_MTX(sCurrentGdDl), eyeShift, 0.0f, 0.0f);
+        gSPMatrix(next_gfx(), GD_LOWER_29(&DL_CURRENT_MTX(sCurrentGdDl)),
+                  G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_NOPUSH);
+        next_mtx();
+    }
 }
 
 /* 25245C -> 25262C */
@@ -2636,6 +2644,16 @@ void gd_create_perspective_matrix(f32 fovy, f32 aspect, f32 near, f32 far) {
     gSPMatrix(next_gfx(), rotMtx, G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH);
     func_801A3324(0.0f, 0.0f, 0.0f);
     next_mtx();
+    /* SBS: apply per-eye horizontal shift so the Goddard face has depth parallax.
+     * Left eye (gSBSEye==-1) shifts right (+), right eye (+1) shifts left (-),
+     * making the head appear to pop out of the screen. */
+    if (gSBSEye != 0) {
+        f32 eyeShift = -(f32)gSBSEye * CVarGetFloat(CVAR_ENHANCEMENT("SBSGoddardDepth"), 8.0f);
+        guTranslate(&DL_CURRENT_MTX(sCurrentGdDl), eyeShift, 0.0f, 0.0f);
+        gSPMatrix(next_gfx(), GD_LOWER_29(&DL_CURRENT_MTX(sCurrentGdDl)),
+                  G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_NOPUSH);
+        next_mtx();
+    }
 }
 
 /* 25262C -> 252AF8 */

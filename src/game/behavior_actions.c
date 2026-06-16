@@ -169,9 +169,17 @@ Gfx *geo_move_mario_part_from_parent(s32 run, UNUSED struct GraphNode *node, Mat
 // not in behavior file
 // n is the number of objects to spawn, r if the rate of change of phase (frequency?)
 void spawn_sparkle_particles(s32 n, s32 a1, s32 a2, s32 r) {
-    s16 D_8035FF10;
+    static s16 D_8035FF10 = 0;
     s32 i;
-    s16 separation = 0x10000 / n; // Evenly spread around a circle
+    s16 separation;
+
+    // In SBS mode the scene is rendered twice per frame, so halve the particle
+    // count to keep per-eye density equivalent and avoid doubling render cost.
+    if (gSBSActive && n > 1) {
+        n = (n + 1) / 2;
+    }
+
+    separation = 0x10000 / n; // Evenly spread around a circle
 
     for (i = 0; i < n; i++) {
         spawn_object_relative(0, sins(D_8035FF10 + i * separation) * a1, (i + 1) * a2,

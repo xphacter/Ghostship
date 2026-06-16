@@ -36,6 +36,7 @@ s16 gCurrAreaIndex;
 s16 gSavedCourseNum;
 s16 gMenuOptSelectIndex;
 s16 gSaveOptSelectIndex;
+s8  gSBSActive = 0; /* 1 when SBS mode is enabled; updated each render_game() call */
 
 struct SpawnInfo *gMarioSpawnInfo = &gPlayerSpawnInfos[0];
 struct GraphNode **gLoadedGraphNodes = D_8033A160;
@@ -121,8 +122,16 @@ void print_intro_text(void) {
 #ifdef VERSION_EU
             print_text(20, 20, "START");
 #else
-            print_text_centered(GFX_DIMENSIONS_FROM_LEFT_EDGE(60), 38, "PRESS");
-            print_text_centered(GFX_DIMENSIONS_FROM_LEFT_EDGE(60), 20, "START");
+            if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
+                /* In SBS mode GFX_DIMENSIONS_FROM_LEFT_EDGE(60)≈7 maps off-screen
+                 * after the world-pass correction.  Use a tunable CVar instead. */
+                s32 sbsPressX = CVarGetInteger(CVAR_ENHANCEMENT("SBSPressStartX"), 60);
+                print_text_centered(sbsPressX, 38, "PRESS");
+                print_text_centered(sbsPressX, 20, "START");
+            } else {
+                print_text_centered(GFX_DIMENSIONS_FROM_LEFT_EDGE(60), 38, "PRESS");
+                print_text_centered(GFX_DIMENSIONS_FROM_LEFT_EDGE(60), 20, "START");
+            }
 #endif
         }
     }
@@ -360,6 +369,9 @@ void play_transition_after_delay(s16 transType, s16 time, u8 red, u8 green, u8 b
 }
 
 void render_game(void) {
+    /* Cache SBS state once per frame so behavior code (UPDATE phase) can read it
+     * next frame without needing to call CVarGetInteger directly. */
+    gSBSActive = (s8)(CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0) != 0);
     if (gCurrentArea != NULL && !gWarpTransition.pauseRendering) {
         if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
             /* Compute the camera's right vector (horizontal only).
@@ -519,6 +531,21 @@ void render_game(void) {
                      *   gDialogVariable      -- NPC variable (e.g. star count)
                      *   gCutsceneMsgXOffset  -- cutscene subtitle position
                      *   gCutsceneMsgYOffset
+                     *
+                     * Additional hazard (root cause of the SBS "can't pause" bug):
+                     *   On the first frame of pausing, the left eye runs
+                     *   DIALOG_STATE_OPENING (no button check) and the right eye
+                     *   then runs DIALOG_STATE_VERTICAL where it detects the same
+                     *   buttonPressed event that triggered the pause.  This causes
+                     *   the right eye to return MENU_OPT_DEFAULT (continue/unpause),
+                     *   which immediately unpauses the game on the next frame before
+                     *   the player ever sees the pause screen.
+                     *
+                     *   Fix: zero gPlayer3Controller->buttonPressed for the right-eye
+                     *   call so it is render-only.  The left eye already handled all
+                     *   button input for this frame.  Also save/restore gMenuMode so
+                     *   any right-eye button handler that sneaks through cannot leave
+                     *   the mode in an inconsistent state.
                      */
                     /* Variables already declared in ingame_menu.h */
                     u16 savedFadeTimer       = gDialogColorFadeTimer;
@@ -539,12 +566,19 @@ void render_game(void) {
                     extern s8  gLastDialogResponse;
                     extern u8  gMenuHoldKeyIndex;
                     extern u8  gMenuHoldKeyTimer;
+                    extern s16 gMenuMode;
                     s16 savedTextPos         = gDialogTextPos;
                     s8  savedLineNum         = gDialogLineNum;
                     s16 savedLastPageStrPos  = gLastDialogPageStrPos;
                     s8  savedLastResponse    = gLastDialogResponse;
                     u8  savedHoldKeyIndex    = gMenuHoldKeyIndex;
                     u8  savedHoldKeyTimer    = gMenuHoldKeyTimer;
+                    /* Prevent right-eye from processing button inputs -- it is render-only.
+                     * Also save gMenuMode; the button handler in render_pause_courses_and_castle
+                     * sets it to MENU_MODE_NONE, which must not persist after right-eye. */
+                    s16 savedMenuMode        = gMenuMode; /* gMenuMode extern declared above */
+                    u16 savedButtonPressed   = gPlayer3Controller->buttonPressed;
+                    gPlayer3Controller->buttonPressed = 0;
 
                     s16 rightIndex = render_menus_and_dialogs();
 
@@ -566,6 +600,8 @@ void render_game(void) {
                     gLastDialogResponse   = savedLastResponse;
                     gMenuHoldKeyIndex     = savedHoldKeyIndex;
                     gMenuHoldKeyTimer     = savedHoldKeyTimer;
+                    gMenuMode             = savedMenuMode;
+                    gPlayer3Controller->buttonPressed = savedButtonPressed;
 
                     if (rightIndex != MENU_OPT_NONE) {
                         gMenuOptSelectIndex = rightIndex;

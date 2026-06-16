@@ -26,9 +26,10 @@ extern "C" {
 // ---------------------------------------------------------------------------
 
 void StereoRendering_Init() {
+    CVarRegisterInteger(CVAR_ENHANCEMENT("SBSPressStartX"), 60);
     CVarRegisterInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0);
     CVarRegisterFloat(CVAR_ENHANCEMENT("EyeSeparation"), 30.0f);
-    /* HUD mapping tuning -- live-adjustable via the Enhancements menu. */
+    CVarRegisterFloat(CVAR_ENHANCEMENT("SBSGoddardDepth"), 8.0f);
 
 }
 
