@@ -3,6 +3,7 @@
 
 #include "port/ui/cvar_prefixes.h"
 #include "port/Engine.h"
+#include "port/Enhancements/StereoRendering.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -215,6 +216,13 @@ void GfxPrint_SetColor(GfxPrint* this, u32 r, u32 g, u32 b, u32 a) {
 }
 
 void GfxPrint_SetPosPx(GfxPrint* this, s32 x, s32 y) {
+    /* SBS: GfxPrint draws every glyph via gSPTextureRectangle using absolute
+     * screen-pixel coordinates, which bypasses the viewport/scissor split
+     * that geo_process_root() already applies to 3D geometry. Remap into the
+     * current eye's half using the same world-pass calibration used for
+     * file select / star select / level title cards. sbsHudBaseX() is a
+     * no-op when SBS is disabled. */
+    x = sbsHudBaseX(x);
     this->posX = this->baseX + (x * 4) + CVarGetInteger(CVAR_DEVELOPER_TOOLS("GfxPrintChar.StartOffset"), 0);
     this->posY = this->baseY + (y * 4);
 }
@@ -259,30 +267,52 @@ void GfxPrint_PrintCharImpl(GfxPrint* this, u8 c) {
         tile = 0;
     }
 
+    /* SBS: each eye half is 160px wide instead of 320px, so glyphs must be
+     * compressed horizontally to fit (vertical extent is untouched since SBS
+     * only splits the screen left/right). Halving the rect's X-span while
+     * doubling dsdx keeps the same texels mapped to fewer output pixels -
+     * same technique as render_textrect() in print.c. The per-character
+     * advance is halved too so subsequent glyphs stay correctly spaced in
+     * the compressed half (the start position was already remapped once in
+     * GfxPrint_SetPosPx, and since sbsHudBaseX is affine, start-only remap +
+     * halved stride is equivalent to remapping every glyph individually). */
+    int sbsEye = (gSBSHudEye != 0) ? gSBSHudEye : gSBSEye;
+    s32 sbsActive = (sbsEye != 0);
+    s32 glyphW = sbsActive ? 16 : 32;
+    s32 shadowOfsX = sbsActive ? 2 : 4;
+    u16 dsdxNormal = sbsActive ? (1 << 11) : (1 << 10);
+    u16 dsdxEnlarge = sbsActive ? (1 << 10) : (1 << 9);
+
     if (this->flags & GFXP_FLAG_SHADOW) {
         gDPSetColor(this->dList++, G_SETPRIMCOLOR, 0);
 
         if (this->flags & GFXP_FLAG_ENLARGE) {
-            gSPTextureRectangle(this->dList++, (this->posX + 4) << 1, (this->posY + 4) << 1, (this->posX + 4 + 32) << 1,
-                                (this->posY + 4 + 32) << 1, tile, (u16)(c & 4) * 64, (u16)(c >> 3) * 256, 1 << 9,
-                                1 << 9);
+            gSPTextureRectangle(this->dList++, (this->posX + shadowOfsX) << 1, (this->posY + 4) << 1,
+                                (this->posX + shadowOfsX + glyphW) << 1, (this->posY + 4 + 32) << 1, tile,
+                                (u16)(c & 4) * 64, (u16)(c >> 3) * 256, dsdxEnlarge, 1 << 9);
         } else {
-            gSPTextureRectangle(this->dList++, this->posX + 4, this->posY + 4, this->posX + 4 + 32, this->posY + 4 + 32,
-                                tile, assetOffsetX + (u16)(c & 4) * 64, (u16)(c >> 3) * 256, 1 << 10, 1 << 10);
+            gSPTextureRectangle(this->dList++, this->posX + shadowOfsX, this->posY + 4,
+                                this->posX + shadowOfsX + glyphW, this->posY + 4 + 32, tile,
+                                assetOffsetX + (u16)(c & 4) * 64, (u16)(c >> 3) * 256, dsdxNormal, 1 << 10);
         }
 
         gDPSetColor(this->dList++, G_SETPRIMCOLOR, this->color.rgba);
     }
 
     if (this->flags & GFXP_FLAG_ENLARGE) {
-        gSPTextureRectangle(this->dList++, (this->posX) << 1, (this->posY) << 1, (this->posX + 32) << 1,
-                            (this->posY + 32) << 1, tile, (u16)(c & 4) * 64, (u16)(c >> 3) * 256, 1 << 9, 1 << 9);
+        gSPTextureRectangle(this->dList++, (this->posX) << 1, (this->posY) << 1, (this->posX + glyphW) << 1,
+                            (this->posY + 32) << 1, tile, (u16)(c & 4) * 64, (u16)(c >> 3) * 256, dsdxEnlarge,
+                            1 << 9);
     } else {
-        gSPTextureRectangle(this->dList++, this->posX, this->posY, this->posX + 32, this->posY + 32, tile,
-                            assetOffsetX + (u16)((c & 4) * 64), (u16)(c >> 3) * 256, 1 << 10, 1 << 10);
+        gSPTextureRectangle(this->dList++, this->posX, this->posY, this->posX + glyphW, this->posY + 32, tile,
+                            assetOffsetX + (u16)((c & 4) * 64), (u16)(c >> 3) * 256, dsdxNormal, 1 << 10);
     }
 
-    this->posX += CVarGetInteger(CVAR_DEVELOPER_TOOLS("GfxPrintChar.Spacing"), 32);
+    s32 spacing = CVarGetInteger(CVAR_DEVELOPER_TOOLS("GfxPrintChar.Spacing"), 32);
+    if (sbsActive) {
+        spacing /= 2;
+    }
+    this->posX += spacing;
 }
 
 void GfxPrint_PrintStringWithSize(GfxPrint* this, const void* buffer, u32 charSize, u32 charCount) {

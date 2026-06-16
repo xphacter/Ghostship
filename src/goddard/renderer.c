@@ -2976,9 +2976,17 @@ void update_cursor(void) {
         begin_gddl(sHandShape->dlNums[gGdFrameBufNum]);
         if (CVarGetInteger(CVAR_ENHANCEMENT("Stereoscopic3D"), 0)) {
             /* SBS: draw the cursor in both eye halves so each eye's scissor
-             * sees it.  Compress x to 0-160 for left half, 160-320 for right. */
-            gd_put_sprite(handTex, csrX >> 1,         csrY, 0x20, 0x20);
-            gd_put_sprite(handTex, (csrX >> 1) + 160, csrY, 0x20, 0x20);
+             * sees it.  gd_put_sprite() emits a gSPTextureRectangle, which
+             * bypasses the per-eye viewport set up in geo_process_root() and
+             * uses absolute screen coordinates -- the same situation
+             * sbsHudBaseX() (StereoRendering.h) handles for file select /
+             * star select / level title cards.  A naive 0-160 / 160-320
+             * halve-and-shift (the old code here) ignores that and leaves the
+             * cursor misaligned, most visibly in the right eye.  Use the same
+             * calibrated world-pass correction instead. */
+            s32 sbsBase = (s32)(csrX * 0.5f + 0.5f);
+            gd_put_sprite(handTex, sbsBase - 27,  csrY, 0x20, 0x20);
+            gd_put_sprite(handTex, sbsBase + 186, csrY, 0x20, 0x20);
         } else {
             gd_put_sprite(handTex, csrX, csrY, 0x20, 0x20);
         }
@@ -3452,7 +3460,17 @@ void gd_put_sprite(u16 *sprite, s32 x, s32 y, s32 wx, s32 wy) {
     gSPDisplayList(next_gfx(), osVirtualToPhysical(gd_dl_sprite_start_tex_block));
     gDPLoadTextureBlock(next_gfx(), sprite, G_IM_FMT_RGBA, G_IM_SIZ_16b, 32, 32, 0,
         G_TX_WRAP | G_TX_NOMIRROR, G_TX_WRAP | G_TX_NOMIRROR, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
-    gSPTextureRectangle(next_gfx(), x << 2, (y) << 2, (x + 32) << 2, (y + 32) << 2,
+    /* gSPScisTextureRectangle (not the plain gSPTextureRectangle) -- the SBS
+     * cursor draw below can pass a negative x (sbsBase - 27, when the cursor
+     * is near the left screen edge).  gSPTextureRectangle packs x into a
+     * 12-bit UNSIGNED field with no sign extension, so a small negative
+     * value wraps to a huge bogus coordinate (and the matching x+32 lrx
+     * wraps too, producing an inverted/garbage rect) -- this is the source
+     * of the right-eye texture corruption/flicker.  gSPScisTextureRectangle
+     * clamps negative x/y to 0 and shifts the texture s/t origin to
+     * compensate, so the sprite clips cleanly at the screen edge instead of
+     * wrapping.  No-op for the normal (non-negative) case. */
+    gSPScisTextureRectangle(next_gfx(), x << 2, (y) << 2, (x + 32) << 2, (y + 32) << 2,
         G_TX_RENDERTILE, 0, 0, 1 << 10, 1 << 10);
 
     gDPPipeSync(next_gfx());

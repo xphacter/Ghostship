@@ -16,6 +16,7 @@
 #include "engine/level_script.h"
 #include "game/ingame_menu.h"
 #include "game/object_list_processor.h"
+#include "port/Enhancements/StereoRendering.h"
 
 BetterLevelSelect self;
 
@@ -402,7 +403,39 @@ Gfx* BetterLevelSelect_DrawMenu(s32 state, struct GraphNode* node, UNUSED void* 
     int language = CVarGetInteger(CVAR_DEVELOPER_TOOLS("BLSLanguage"), ROM_JP);
     int32_t count = ARRAY_COUNT(entries);
     GfxPrint printer;
-    Gfx* head = &self.pool[0];
+
+    /* SBS: this GEO_ASM callback is invoked from geo_process_root(), which
+     * render_game() calls twice per frame in SBS mode - once with
+     * gSBSEye == -1 (left) and once with gSBSEye == 1 (right) - before the
+     * assembled master display list is ever sent off to be drawn. Both
+     * calls used to build into the same self.pool[0] start address, so the
+     * right-eye call clobbered the left-eye's display list before the GPU
+     * had consumed it: the left eye's branch then pointed at the right
+     * eye's (already shifted off-screen for that half) content, i.e.
+     * nothing - hence the left eye rendering completely black. Giving each
+     * eye its own half of the pool keeps both display lists intact until
+     * they're actually drawn. */
+    s32 poolHalf = ARRAY_COUNT(self.pool) / 2;
+    Gfx* poolBase = &self.pool[(gSBSEye == 1) ? poolHalf : 0];
+    Gfx* head = poolBase;
+
+    /* SBS: GfxPrint's world-pass sbsHudBaseX() branch (gSBSEye set,
+     * gSBSHudEye == 0) applies an empirically-calibrated correction
+     * (-27 left / +186 right) shared with file select/star select/level
+     * title cards. That calibration deliberately gives left/right a
+     * constant ~53px disparity (not zero) so this 2D text matches the
+     * stereo depth those other screens converge on - it is NOT a bug, so
+     * it must not be bypassed (an earlier attempt to do so via gSBSHudEye
+     * fixed the clipping below but broke 3D alignment with the rest of
+     * the UI - left/right stopped landing "on top of each other").
+     * The real problem is narrower: this menu's near-left-edge columns
+     * (2-3) push the LEFT eye's result negative, and gSPTextureRectangle
+     * silently clips negative x - "(Z/R) " and "0 " vanish. Fix it by
+     * nudging just those columns rightward while SBS is active (both eye
+     * passes shift by the same amount, so the calibrated disparity is
+     * unchanged) instead of touching the shared formula. */
+    auto sbsCol = [](int col) { return (gSBSEye != 0 && col < 8) ? 8 : col; };
+
     gDPSetRenderMode(head++, G_RM_OPA_SURF, G_RM_OPA_SURF2);
     gDPSetCycleType(head++, G_CYC_FILL);
     gDPSetFillColor(head++, 0x0001);
@@ -420,7 +453,7 @@ Gfx* BetterLevelSelect_DrawMenu(s32 state, struct GraphNode* node, UNUSED void* 
     for (int i = 0; i < 20; i++) {
         int idx = (self.topDisplayedLevel + i + count) % count;
         LevelSelectEntry entry = entries[idx];
-        GfxPrint_SetPos(&printer, 3, i + 4);
+        GfxPrint_SetPos(&printer, sbsCol(3), i + 4);
 
         if (idx == self.currentLevelIndex) {
             GfxPrint_SetColor(&printer, 255, 100, 100, 255);
@@ -436,7 +469,7 @@ Gfx* BetterLevelSelect_DrawMenu(s32 state, struct GraphNode* node, UNUSED void* 
 
     if (!acts.empty()) {
         int y = 25;
-        GfxPrint_SetPos(&printer, 2, y);
+        GfxPrint_SetPos(&printer, sbsCol(2), y);
         GfxPrint_SetColor(&printer, 100, 100, 100, 255);
         GfxPrint_Printf(&printer, "(Z/R) Act:");
         GfxPrint_SetColor(&printer, 200, 200, 50, 255);
@@ -445,7 +478,7 @@ Gfx* BetterLevelSelect_DrawMenu(s32 state, struct GraphNode* node, UNUSED void* 
         auto areas = entries[self.currentLevelIndex].areas;
         if (entries[self.currentLevelIndex].levelId == LEVEL_THI) {
             y++;
-            GfxPrint_SetPos(&printer, 2, y);
+            GfxPrint_SetPos(&printer, sbsCol(2), y);
             GfxPrint_SetColor(&printer, 100, 100, 100, 255);
             GfxPrint_Printf(&printer, "(C L/R) Area:");
             GfxPrint_SetColor(&printer, 200, 50, 50, 255);
@@ -454,7 +487,7 @@ Gfx* BetterLevelSelect_DrawMenu(s32 state, struct GraphNode* node, UNUSED void* 
         }
 
         y++;
-        GfxPrint_SetPos(&printer, 2, y);
+        GfxPrint_SetPos(&printer, sbsCol(2), y);
         GfxPrint_SetColor(&printer, 100, 100, 100, 255);
 
         switch (entries[self.currentLevelIndex].levelId) {
@@ -478,7 +511,7 @@ Gfx* BetterLevelSelect_DrawMenu(s32 state, struct GraphNode* node, UNUSED void* 
     head = GfxPrint_Close(&printer);
     GfxPrint_Destroy(&printer);
     gSPEndDisplayList(head);
-    return self.pool;
+    return poolBase;
 }
 
 static const GeoLayout BetterLevelSelect_GeoWrapper[] = {
