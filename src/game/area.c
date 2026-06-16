@@ -382,6 +382,21 @@ void render_game(void) {
             f32 dx = gLakituState.focus[0] - gLakituState.pos[0];
             f32 dz = gLakituState.focus[2] - gLakituState.pos[2];
             f32 len = sqrtf(dx * dx + dz * dz);
+
+            /* Distance-aware separation: with a fixed world-unit eyeSep, the
+             * angular disparity at the (toe-in) convergence point is roughly
+             * constant, but disparity on geometry near the camera scales with
+             * eyeSep / len -- so as len (camera-to-focus distance) shrinks,
+             * close-up objects (e.g. Mario himself when the camera sits right
+             * behind his head) show rapidly growing, uncomfortable disparity.
+             * Taper eyeSep down proportionally once len drops below a
+             * reference distance so that ratio is capped instead of blowing
+             * up at close range; full separation is unchanged above it. */
+            const f32 sepRefDist = 800.0f;
+            if (len < sepRefDist) {
+                eyeSep *= (len / sepRefDist);
+            }
+
             f32 rx = 0.0f, rz = 0.0f;
             if (len > 0.001f) {
                 rx = (-dz / len) * eyeSep;
@@ -389,6 +404,24 @@ void render_game(void) {
             }
             f32 savedX = gLakituState.pos[0];
             f32 savedZ = gLakituState.pos[2];
+
+            /* Toe-in stereo: shift pos only, both eyes converge on the same
+             * focus point. Reverted from a parallel-axis experiment (shifting
+             * focus identically to pos) that eliminated the per-eye rotation
+             * difference feeding FrameInterpolation's near-180-degree
+             * snap-vs-interpolate heuristic (see interpolate_mtxf's col_dot
+             * check) -- which was the suspected cause of Mario appearing at a
+             * different angle / clipped into the wall in one eye during steep
+             * slides. That change moved the zero-parallax convergence plane
+             * from "at Lakitu's focus" to infinity, which is comfortable far
+             * away but causes severe, distance-dependent eye strain ("going
+             * crosseyed") whenever the camera is close to the subject, since
+             * the fixed-world-unit eye separation is no longer attenuated by
+             * convergence. That regression was worse than the bug it fixed,
+             * so toe-in is restored here. The original slide-angle artifact
+             * needs a different fix (e.g. sharing the col_dot flip decision
+             * between eyes inside FrameInterpolation.cpp) that doesn't touch
+             * the camera convergence model. */
 
             /* Left eye */
             gSBSEye = -1;
