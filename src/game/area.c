@@ -418,8 +418,12 @@ void render_game(void) {
             gSPViewport(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(&D_8032CF00));
             gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
                           SCREEN_HEIGHT - BORDER_HEIGHT);
-            /* Must free text labels and advance cutscene state exactly once. */
-            render_text_labels();
+            /* Must clear text labels and advance cutscene state exactly once.
+             * Discard (not render) so PRESS START / HUD text queued this frame
+             * doesn't get drawn — render_text_labels() would still draw the
+             * queued glyphs, making the HUD-hide setting just blink the text
+             * on its normal cadence instead of fully hiding it. */
+            discard_text_labels();
             do_cutscene_handler();
             print_displaying_credits_entry();
             gMenuOptSelectIndex = render_menus_and_dialogs();

@@ -453,3 +453,22 @@ void render_text_labels(void) {
         sTextLabelsCount = 0;
     }
 }
+
+/**
+ * Frees all pending text labels (PRESS START, HUD counters, etc.) WITHOUT
+ * drawing them. Used by "Hide HUD in SBS": calling render_text_labels()
+ * still emits the queued glyphs to the display list, so text queued during
+ * the update phase (e.g. print_intro_text()'s PRESS START) kept appearing
+ * on its normal blink cadence instead of staying fully hidden. Skipping the
+ * flush entirely (instead of calling this) isn't safe either, since queued
+ * labels would never be freed/reset and would overflow sTextLabels[].
+ */
+void discard_text_labels(void) {
+    s32 i;
+
+    for (i = 0; i < sTextLabelsCount; i++) {
+        mem_pool_free(gEffectsMemoryPool, sTextLabels[i]);
+    }
+
+    sTextLabelsCount = 0;
+}

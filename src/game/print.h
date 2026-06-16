@@ -29,5 +29,6 @@ extern_s void print_text_fmt_int(s32 x, s32 y, const char *str, s32 n);
 extern_s void print_text(s32 x, s32 y, const char *str);
 extern_s void print_text_centered(s32 x, s32 y, const char *str);
 extern_s void render_text_labels(void);
+extern_s void discard_text_labels(void);
 
 #endif // PRINT_H
