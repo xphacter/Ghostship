@@ -2985,8 +2985,29 @@ void update_cursor(void) {
              * cursor misaligned, most visibly in the right eye.  Use the same
              * calibrated world-pass correction instead. */
             s32 sbsBase = (s32)(csrX * 0.5f + 0.5f);
-            gd_put_sprite(handTex, sbsBase - 27,  csrY, 0x20, 0x20);
-            gd_put_sprite(handTex, sbsBase + 186, csrY, 0x20, 0x20);
+            s32 leftX = sbsBase - 27;
+            s32 rightX = sbsBase + 186;
+            /* leftX goes negative for any csrX below ~53 (roughly the left
+             * quarter of the cursor's range), and gSPScisTextureRectangle
+             * (see gd_put_sprite()) clips the rect's left edge at screen x=0 --
+             * correct for a true off-screen sprite, but here it makes the
+             * left-eye hand fade to a thin sliver (or nothing) well before the
+             * cursor reaches the actual edge.
+             *
+             * Clamping leftX alone (a prior version of this fix) kept the
+             * sprite visible but broke sync with the right eye: leftX would
+             * pin at 0 while rightX kept sliding left with the mouse, closing
+             * the fixed 213px gap between the two and visibly misaligning
+             * them. Shift BOTH by the same amount instead, so the gap (and
+             * therefore the stereo alignment) is preserved -- both hands pin
+             * together rather than drifting apart. */
+            if (leftX < 0) {
+                s32 shift = -leftX;
+                leftX += shift;
+                rightX += shift;
+            }
+            gd_put_sprite(handTex, leftX,  csrY, 0x20, 0x20);
+            gd_put_sprite(handTex, rightX, csrY, 0x20, 0x20);
         } else {
             gd_put_sprite(handTex, csrX, csrY, 0x20, 0x20);
         }
@@ -3486,10 +3507,42 @@ void gd_setup_cursor(struct ObjGroup *parentgrp) {
     UNUSED struct ObjNet *net; // 2c
 
     sHandShape = make_shape(0, "mouse");
-    sHandShape->dlNums[0] = gd_startdisplist(7);
+    /* gd_startdisplist(7)/create_child_gdl() doesn't give dlNums[0]/dlNums[1]
+     * their own fixed-size buffers -- each child is just a watermark window
+     * into sStaticDl's shared gfx array, sized by however much was written
+     * *this* setup call (cpy_remaining_gddl()/gd_enddlsplist_parent()).
+     *
+     * update_cursor() rebuilds whichever dlNums[gGdFrameBufNum] slot is
+     * current every frame, and with Stereoscopic3D on it calls
+     * gd_put_sprite() TWICE (once per eye) instead of once. That overruns
+     * past a single-sprite watermark window into the adjacent slot's memory,
+     * corrupting whatever it's holding for its own next display every other
+     * frame -- the alternating "good frame / corrupted frame" flicker.
+     *
+     * Reserving a 2-sprite watermark at setup time (by calling
+     * gd_put_sprite() twice here) fixes that overlap, but it does so by
+     * permanently advancing sStaticDl's shared watermark further than the
+     * original game ever did -- stealing those extra Gfx slots from whatever
+     * static display lists are built *after* the cursor's, later in setup.
+     * sStaticDl's total capacity (see new_gd_dl(0, 1900, ...) below) is fixed
+     * and was apparently sized with no slack for that, so the encroachment
+     * tips some later allocation over next_gfx()'s "Gfx list overflow" check
+     * -- a crash on entering this screen.
+     *
+     * Fix: give the cursor's two slots their own dedicated buffers via
+     * new_gd_dl() instead of sub-allocating from sStaticDl at all. Each gets
+     * a fixed, generously-sized capacity (room for several sprites, not just
+     * one), so the runtime SBS double-write can never overrun into anything
+     * else -- and since it's no longer carved out of sStaticDl, it can't
+     * shrink what's left for any later static allocation either. */
+    sHandShape->dlNums[0] = new_gd_dl(0, 64, 1, 1, 1, 1)->number;
+    begin_gddl(sHandShape->dlNums[0]);
+    gDPPipeSync(next_gfx());
     gd_put_sprite((u16 *) gd_texture_hand_open, 100, 100, 32, 32);
     gd_enddlsplist_parent();
-    sHandShape->dlNums[1] = gd_startdisplist(7);
+    sHandShape->dlNums[1] = new_gd_dl(0, 64, 1, 1, 1, 1)->number;
+    begin_gddl(sHandShape->dlNums[1]);
+    gDPPipeSync(next_gfx());
     gd_put_sprite((u16 *) gd_texture_hand_open, 100, 100, 32, 32);
     gd_enddlsplist_parent();
 
